@@ -501,6 +501,43 @@ final class StateMachineAcknowledgementTests: XCTestCase {
         XCTAssertNil(stateMachine.speechPresentation)
     }
 
+    func testStaleSpeechCancellationClearsPreparingWithoutHidingNewReply() {
+        let old = SpeechPresentation(
+            utteranceID: "old-106", originalUtteranceID: "old-106",
+            mode: .newDelivery, commandSequence: 106, commandID: "command-106"
+        )
+        let next = SpeechPresentation(
+            utteranceID: "new-107", originalUtteranceID: "new-107",
+            mode: .newDelivery, commandSequence: 107, commandID: "command-107"
+        )
+        for cancellationBeforeOption in [false, true] {
+            let machine = StateMachine()
+            machine.handleServiceEvent(source: "tts", newState: "message_waiting",
+                                       text: "The provider session ended.", presentation: old)
+            if !cancellationBeforeOption { machine.setPlaybackRequested() }
+            machine.handleServiceEvent(source: "tts", newState: "idle", text: nil,
+                                       presentation: old)
+            // A late visual gesture acknowledgement must not resurrect preparing.
+            machine.setPlaybackRequested()
+            XCTAssertEqual(machine.state, .idle)
+            XCTAssertNil(machine.messagePreview)
+            XCTAssertNil(machine.speechPresentation)
+
+            machine.handleServiceEvent(source: "tts", newState: "message_waiting",
+                                       text: "Restart queued reply", presentation: next)
+            for phase in ["message_waiting", "preparing", "speaking"] {
+                machine.handleServiceEvent(source: "tts", newState: phase,
+                                           text: "Restart queued reply", presentation: next)
+                let expected = machine.state
+                machine.handleServiceEvent(source: "tts", newState: "idle", text: nil,
+                                           presentation: old)
+                XCTAssertEqual(machine.state, expected)
+                XCTAssertEqual(machine.messagePreview, "Restart queued reply")
+                XCTAssertEqual(machine.speechPresentation, next)
+            }
+        }
+    }
+
     func testBlankWaitingAndPlaybackEventsPreserveAvailableResponsePreview() {
         let stateMachine = StateMachine()
 

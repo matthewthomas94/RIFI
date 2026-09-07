@@ -335,6 +335,9 @@ class TTSWorker:
             if not chunk_text:
                 return
             if not self._speech_is_eligible(speech_intent):
+                # The coordinator may already have published this preview.
+                # Clear only its identity before cancellation advances the queue.
+                _notify_state("idle", **_presentation_fields(speech_intent))
                 self._observe_speech("cancelled", speech_intent)
                 return
             with self._lock:
@@ -453,6 +456,8 @@ class TTSWorker:
             if not text:
                 return
             if not self._speech_is_eligible(speech_intent):
+                # Option has optimistically moved this preview to preparing.
+                _notify_state("idle", **_presentation_fields(speech_intent))
                 self._observe_speech("cancelled", speech_intent)
                 return
 

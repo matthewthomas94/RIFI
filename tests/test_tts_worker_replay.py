@@ -284,6 +284,32 @@ class TTSWorkerReplayTests(unittest.TestCase):
         self.assertEqual(worker.played_intents, [{"utterance_id": "new"}])
         self.assertEqual(events, [("cancelled", "old"), ("queued", "new")])
 
+    def test_stale_speech_clears_exact_preview_before_cancellation_advances_queue(self):
+        for collected in (False, True):
+            with self.subTest(collected=collected):
+                worker = self.make_worker()
+                intent = {"utterance_id": "old-106", "command_seq": 106}
+                if collected:
+                    worker._pending_text = "The provider session ended."
+                    worker._pending_speech_intent = intent
+                else:
+                    worker.input_queue.put({
+                        "text": "The provider session ended.",
+                        "_speech_intent": intent,
+                    })
+                worker._speech_eligibility = lambda payload: False
+                events = []
+                worker._speech_observer = lambda state, payload: events.append(
+                    (state, payload["utterance_id"])
+                )
+                with patch.object(tts_worker, "_notify_state", side_effect=
+                                  lambda state, **payload: events.append(
+                                      (state, payload.get("utterance_id")))):
+                    worker.play()
+                self.assertEqual(events, [("idle", "old-106"), ("cancelled", "old-106")])
+                self.assertEqual(worker.played_texts, [])
+                self.assertEqual(worker._pending_text, "")
+
     def test_play_and_replay_do_not_start_while_a_plan_is_active(self):
         worker = self.make_worker()
         worker._playing = True

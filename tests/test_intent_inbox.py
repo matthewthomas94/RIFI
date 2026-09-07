@@ -12,6 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(ROOT, "services"))
 
 from intent_inbox import IntentInbox, sync_deliverable_state  # noqa: E402
+from provider_turn_broker import ProviderTurnBroker  # noqa: E402
 
 
 def metadata(seq: int, command_id: str, route: str = "continue_current") -> dict:
@@ -55,6 +56,84 @@ def item_metadata(
 
 
 class IntentInboxTests(unittest.TestCase):
+    def test_persisted_blocker_requires_exact_explicit_skip_and_preserves_queue(self):
+        for provider in ("codex", "claude"):
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "inbox.sqlite3"
+                command = str(Path(directory) / "ready")
+                state = str(Path(directory) / "state.json")
+                inbox = IntentInbox(path)
+                first = inbox.enqueue("uncertain", {**metadata(94, "old"), "provider": provider}, "continue_current")
+                for seq in (95, 96):
+                    inbox.enqueue(str(seq), metadata(seq, str(seq)), "continue_current")
+                inbox.materialize_next(command_path=command, metadata_path=command + ".meta", transport="test")
+                inbox.observe_claim(first, provider_turn_seen=False)
+                os.unlink(command)
+                os.unlink(command + ".meta")
+                inbox.close()
+                inbox = IntentInbox(path)
+                sync_deliverable_state(state, inbox)
+                blocker = json.loads(Path(state).read_text())["inbox_recovery_blocker"]
+                self.assertEqual(blocker["command_seq"], 94)
+                self.assertNotIn("prompt", blocker)
+                self.assertFalse(inbox.skip_recovery_blocker({**blocker, "intent_id": "wrong"}))
+                self.assertIsNone(inbox.materialize_next(command_path=command, metadata_path=command + ".meta", transport="test"))
+                self.assertTrue(inbox.skip_recovery_blocker(blocker))
+                self.assertFalse(inbox.skip_recovery_blocker(blocker))
+                self.assertEqual([r["state"] for r in inbox.records()], ["cancelled", "pending", "pending"])
+                self.assertEqual(inbox.records()[0]["prompt"], "uncertain")
+                sync_deliverable_state(state, inbox)
+                self.assertIsNone(json.loads(Path(state).read_text())["inbox_recovery_blocker"])
+                next_item = inbox.materialize_next(command_path=command, metadata_path=command + ".meta", transport="test")
+                self.assertEqual(next_item["relay_command_seq"], 95)
+                inbox.observe_claim(next_item, provider_turn_seen=True)
+                os.unlink(command)
+                os.unlink(command + ".meta")
+                last_item = inbox.materialize_next(command_path=command, metadata_path=command + ".meta", transport="test")
+                self.assertEqual(last_item["relay_command_seq"], 96)
+                inbox.close()
+
+    def test_recovery_skip_rejects_late_acknowledgement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "inbox.sqlite3"
+            inbox = IntentInbox(path)
+            first = inbox.enqueue("first", metadata(94, "old"), "continue_current")
+            inbox.observe_claim(first, provider_turn_seen=False)
+            inbox.close()
+            inbox = IntentInbox(path)
+            blocker = inbox.recovery_blocker()
+            self.assertIsNotNone(blocker)
+            inbox.observe_claim(first, provider_turn_seen=True)
+            self.assertFalse(inbox.skip_recovery_blocker(blocker))
+            self.assertEqual(inbox.records()[0]["state"], "acked")
+            inbox.close()
+
+    def test_recovery_skip_does_not_cancel_a_known_provider_turn(self):
+        for provider in ("codex", "claude"):
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "inbox.sqlite3"
+                projection = Path(directory) / "turns.json"
+                inbox = IntentInbox(path, provider_turn_projection_path=projection)
+                first = inbox.enqueue("uncertain", metadata(94, "old"), "continue_current")
+                inbox.observe_claim(first, provider_turn_seen=False)
+                inbox.close()
+                inbox = IntentInbox(path, provider_turn_projection_path=projection)
+                blocker = inbox.recovery_blocker()
+                broker = ProviderTurnBroker(path, projection_path=projection)
+                self.assertTrue(broker.activate({
+                    "app_session_id": "app", "recovery_generation": "1",
+                    "actor_role": "foreground_pm", "foreground_gate_handle": "gate",
+                    "state": "active", "origin": "relay", "provider": provider,
+                    "provider_session_id": "provider", "session_id": "native",
+                    "turn_id": "turn", "intent_id": first["intent_id"],
+                    "relay_command_seq": 94, "relay_command_id": "old", "created_at": 100,
+                }, now=100))
+                self.assertFalse(inbox.skip_recovery_blocker(blocker))
+                self.assertEqual(inbox.records()[0]["state"], "review_required")
+                self.assertEqual(broker.table_records("provider_turns")[0]["state"], "active")
+                broker.close()
+                inbox.close()
+
     def test_existing_v1_database_adds_stable_ack_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "inbox.sqlite3"

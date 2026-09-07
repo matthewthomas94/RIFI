@@ -3386,6 +3386,16 @@ def _handle_relay_control_message(
     provider_turn_broker: ProviderTurnBroker | None = None,
 ) -> bool:
     """Handle provider-neutral relay controls before command publication."""
+    if text.startswith("__SKIP_UNCERTAIN__:"):
+        try:
+            expected = json.loads(text[len("__SKIP_UNCERTAIN__:"):])
+        except (ValueError, TypeError):
+            return True
+        if inbox is not None and isinstance(expected, dict):
+            inbox.skip_recovery_blocker(expected)
+            _sync_intent_inbox_state(inbox, state_path=state_path)
+        return True
+
     if text == "__TTS_STOP__":
         # Recording barge-in stops audio without resurfacing it as replay history.
         tts_worker.stop_playback(reason="recording_barge_in")

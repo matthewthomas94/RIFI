@@ -4,6 +4,13 @@ import Observation
 import SwiftTerm
 import SwiftUI
 
+struct InboxRecoveryBlocker: Codable, Equatable {
+    let intent_id: String
+    let command_seq: Int
+    let command_id: String
+    let recovered_at: Double
+}
+
 protocol EmbeddedTerminalProcess: AnyObject {
     var view: NSView { get }
     var isRunning: Bool { get }
@@ -13,7 +20,9 @@ protocol EmbeddedTerminalProcess: AnyObject {
     var onReady: (() -> Void)? { get set }
     var onTitle: ((String) -> Void)? { get set }
     var onDeliveryBlocked: ((Bool) -> Void)? { get set }
+    var onInboxRecoveryBlocked: ((InboxRecoveryBlocker?) -> Void)? { get set }
     func requestDeliveryRecovery() -> Bool
+    func skipUncertainMessage(_ blocker: InboxRecoveryBlocker) -> Bool
 
     func start(_ launch: ProcessManager.PreparedSessionLaunch) throws
     func focus()
@@ -64,6 +73,7 @@ final class EmbeddedTerminalSession {
     private(set) var terminalTitle = ""
     private(set) var presentationRevision = 0
     private(set) var deliveryBlocked = false
+    private(set) var inboxRecoveryBlocker: InboxRecoveryBlocker?
     var deliveryRecoveryMessage: String?
 
     @ObservationIgnored private let processFactory: ProcessFactory
@@ -105,6 +115,7 @@ final class EmbeddedTerminalSession {
         self.workingDirectory = workingDirectory
         terminalTitle = ""
         deliveryBlocked = false
+        inboxRecoveryBlocker = nil
         deliveryRecoveryMessage = nil
         diagnostics = recordDiagnostics
             ? EmbeddedAgentDiagnostics.start(
@@ -127,6 +138,14 @@ final class EmbeddedTerminalSession {
         )
 
         let next = processFactory()
+        next.onInboxRecoveryBlocked = { [weak self, weak next] blocker in
+            DispatchQueue.main.async {
+                guard let self, let next, self.process === next,
+                      self.phase == .running || self.phase == .starting else { return }
+                self.inboxRecoveryBlocker = blocker
+                self.deliveryRecoveryMessage = nil
+            }
+        }
         next.onDeliveryBlocked = { [weak self, weak next] blocked in
             DispatchQueue.main.async {
                 guard let self, let next, self.process === next,
@@ -271,6 +290,8 @@ final class EmbeddedTerminalSession {
 
     func end() {
         deliveryBlocked = false
+        inboxRecoveryBlocker = nil
+        process?.onInboxRecoveryBlocked = nil
         process?.onDeliveryBlocked = nil
         process?.onExit = nil
         process?.onReady = nil
@@ -284,6 +305,8 @@ final class EmbeddedTerminalSession {
 
     func shutdown() {
         deliveryBlocked = false
+        inboxRecoveryBlocker = nil
+        process?.onInboxRecoveryBlocked = nil
         process?.onDeliveryBlocked = nil
         process?.onExit = nil
         process?.onReady = nil
@@ -304,6 +327,14 @@ final class EmbeddedTerminalSession {
     func requestDeliveryRecovery() -> Bool {
         guard deliveryBlocked, isEmbeddedProcessRunning else { return false }
         return process?.requestDeliveryRecovery() == true
+    }
+
+    func skipUncertainMessage(_ blocker: InboxRecoveryBlocker) {
+        guard isEmbeddedProcessRunning, inboxRecoveryBlocker == blocker else { return }
+        let sent = process?.skipUncertainMessage(blocker) == true
+        deliveryRecoveryMessage = sent
+            ? "Skip requested. If this notice remains, the message is still blocked; an active turn or changed ownership prevents skipping it."
+            : "Could not send recovery request. The uncertain message and queue are unchanged."
     }
 
     func updateTitle(_ title: String) {
@@ -747,6 +778,8 @@ final class RelayVoiceCommandDelivery {
     private let acknowledgementTimeout: TimeInterval
     private let recoveryTimeout: TimeInterval
     private let onDeliveryBlocked: (Bool) -> Void
+    private let onInboxRecoveryBlocked: (InboxRecoveryBlocker?) -> Void
+    private var inboxRecoveryBlocker: InboxRecoveryBlocker?
     private let clearedDraftSafetyDelay: TimeInterval
     private let deferralDiagnosticInterval: TimeInterval
     private let isRunning: () -> Bool
@@ -776,6 +809,7 @@ final class RelayVoiceCommandDelivery {
         acknowledgementTimeout: TimeInterval = 2.0,
         recoveryTimeout: TimeInterval = 10.0,
         onDeliveryBlocked: @escaping (Bool) -> Void = { _ in },
+        onInboxRecoveryBlocked: @escaping (InboxRecoveryBlocker?) -> Void = { _ in },
         clearedDraftSafetyDelay: TimeInterval = 0.25,
         deferralDiagnosticInterval: TimeInterval = 5.0,
         schedule: @escaping Schedule = { delay, queue, work in
@@ -800,6 +834,7 @@ final class RelayVoiceCommandDelivery {
         self.acknowledgementTimeout = acknowledgementTimeout
         self.recoveryTimeout = max(0, recoveryTimeout)
         self.onDeliveryBlocked = onDeliveryBlocked
+        self.onInboxRecoveryBlocked = onInboxRecoveryBlocked
         self.clearedDraftSafetyDelay = max(0, clearedDraftSafetyDelay)
         self.deferralDiagnosticInterval = max(0.25, deferralDiagnosticInterval)
         self.schedule = schedule
@@ -997,6 +1032,11 @@ final class RelayVoiceCommandDelivery {
     @discardableResult
     func claimAndSendIfPossible() -> Bool {
         touchHeartbeat()
+        let blocker = readInboxRecoveryBlocker()
+        if blocker != inboxRecoveryBlocker {
+            inboxRecoveryBlocker = blocker
+            onInboxRecoveryBlocked(blocker)
+        }
         let completedSubmission = completePendingSubmissionIfAcknowledged()
         if let pending = openSubmission, !isRunning() {
             failPendingSubmission(pending, event: "provider_process_terminated")
@@ -1009,7 +1049,7 @@ final class RelayVoiceCommandDelivery {
         if completedSubmission || replayedManualInput {
             return true
         }
-        guard isRunning(), openSubmission == nil else { return false }
+        guard isRunning(), openSubmission == nil, blocker == nil else { return false }
         if deliveryState.isTerminal {
             deliveryState = .idle
         }
@@ -1552,6 +1592,24 @@ final class RelayVoiceCommandDelivery {
         guard let metadata else { return }
         let acknowledgementURL = URL(fileURLWithPath: paths.consumerAcknowledgement)
         try? metadata.write(to: acknowledgementURL, options: .atomic)
+    }
+
+    private func readInboxRecoveryBlocker() -> InboxRecoveryBlocker? {
+        struct State: Decodable { let inbox_recovery_blocker: InboxRecoveryBlocker? }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.commandState)) else { return nil }
+        return (try? JSONDecoder().decode(State.self, from: data))?.inbox_recovery_blocker
+    }
+
+    func skipUncertainMessage(_ expected: InboxRecoveryBlocker) -> Bool {
+        var sent = false
+        performOnDeliveryQueue {
+            guard isRunning(), openSubmission == nil,
+                  readInboxRecoveryBlocker() == expected,
+                  let data = try? JSONEncoder().encode(expected),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            sent = writeBridgeControlLine("__SKIP_UNCERTAIN__:\(json)")
+        }
+        return sent
     }
 
     private func isCommandCurrent(_ key: RelayCommandKey) -> Bool {
@@ -2454,6 +2512,11 @@ final class SwiftTermEmbeddedProcess: EmbeddedTerminalProcess, TerminalViewDeleg
     var onReady: (() -> Void)?
     var onTitle: ((String) -> Void)?
     var onDeliveryBlocked: ((Bool) -> Void)?
+    var onInboxRecoveryBlocked: ((InboxRecoveryBlocker?) -> Void)?
+
+    func skipUncertainMessage(_ blocker: InboxRecoveryBlocker) -> Bool {
+        localProcess.running && voiceDelivery?.skipUncertainMessage(blocker) == true
+    }
 
     func requestDeliveryRecovery() -> Bool {
         guard voiceDelivery?.isDeliveryBlocked == true,
@@ -2559,6 +2622,9 @@ final class SwiftTermEmbeddedProcess: EmbeddedTerminalProcess, TerminalViewDeleg
                 acknowledgementTimeout: voiceDeliveryAcknowledgementTimeout,
                 onDeliveryBlocked: { [weak self] blocked in
                     self?.onDeliveryBlocked?(blocked)
+                },
+                onInboxRecoveryBlocked: { [weak self] blocker in
+                    self?.onInboxRecoveryBlocked?(blocker)
                 },
                 isRunning: { [weak self] in
                     self?.localProcess.running == true
@@ -2747,10 +2813,31 @@ struct EmbeddedTerminalTab: View {
     let workingDirectory: String
     let recoverDelivery: () -> Void
     @State private var confirmsRecovery = false
+    @State private var confirmedInboxBlocker: InboxRecoveryBlocker?
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+            if let blocker = session.inboxRecoveryBlocker, session.isEmbeddedProcessRunning {
+                HStack {
+                    Text(session.deliveryRecoveryMessage ?? "Message \(blocker.command_seq) has an uncertain outcome and is blocking the queue. Skip it to continue; check its outcome before repeating it.")
+                        .font(AppTypography.font(.status))
+                    Button("Skip uncertain message") { confirmedInboxBlocker = blocker }
+                }
+                .padding(14)
+                .background(Color.orange.opacity(0.12))
+                .confirmationDialog("Skip the uncertain message?", isPresented: Binding(
+                    get: { confirmedInboxBlocker != nil },
+                    set: { if !$0 { confirmedInboxBlocker = nil } }
+                )) {
+                    Button("Skip message", role: .destructive) {
+                        if let expected = confirmedInboxBlocker { session.skipUncertainMessage(expected) }
+                        confirmedInboxBlocker = nil
+                    }
+                } message: {
+                    Text("This skips only message \(confirmedInboxBlocker?.command_seq ?? blocker.command_seq). It does not undo any work already performed. Later messages and worker runs are preserved; the uncertain message is not replayed and the session is not restarted.")
+                }
+            }
             if session.deliveryBlocked {
                 HStack {
                     Text(session.deliveryRecoveryMessage ?? "Session delivery blocked. The last message was not acknowledged; later messages remain queued. Restart skips the uncertain message—check its outcome before repeating it.")

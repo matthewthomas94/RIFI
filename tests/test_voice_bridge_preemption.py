@@ -1557,6 +1557,25 @@ class VoiceBridgePreemptionTests(unittest.TestCase):
             }])
             self.assertTrue(worker.input_queue.empty())
 
+    def test_skip_uncertain_control_preserves_newest_command_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            inbox = voice_bridge.IntentInbox(os.path.join(directory, "inbox.sqlite3"))
+            state_path = os.path.join(directory, "state.json")
+            state = {"relay_command_seq": 96, "relay_command_id": "latest"}
+            Path(state_path).write_text(json.dumps(state))
+            expected = {"intent_id": "old", "command_seq": 94, "command_id": "old", "recovered_at": 123}
+            with mock.patch.object(inbox, "skip_recovery_blocker", return_value=False) as skip:
+                self.assertTrue(voice_bridge._handle_relay_control_message(
+                    "__SKIP_UNCERTAIN__:" + json.dumps(expected), FakeTTSWorker(),
+                    inbox=inbox, state_path=state_path, event_log_path=None,
+                ))
+                skip.assert_called_once_with(expected)
+            self.assertEqual(json.loads(Path(state_path).read_text())["relay_command_seq"], 96)
+            self.assertTrue(voice_bridge._handle_relay_control_message(
+                "__SKIP_UNCERTAIN__:bad-json", FakeTTSWorker(), inbox=inbox, state_path=state_path,
+            ))
+            inbox.close()
+
     def test_option_play_control_uses_play_or_replay_boundary(self):
         worker = FakeTTSWorker()
         worker.play_or_replay = mock.Mock(return_value=True)

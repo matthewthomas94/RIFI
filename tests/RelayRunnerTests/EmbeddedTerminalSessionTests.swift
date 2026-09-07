@@ -14,11 +14,17 @@ final class EmbeddedTerminalSessionTests: XCTestCase {
         try session.start(launch())
         XCTAssertFalse(session.requestDeliveryRecovery())
         let staleNotice = first.onDeliveryBlocked
+        let staleInboxNotice = first.onInboxRecoveryBlocked
+        let blocker = InboxRecoveryBlocker(intent_id: "old", command_seq: 94, command_id: "old", recovered_at: 123)
+        first.onInboxRecoveryBlocked?(blocker)
         first.onDeliveryBlocked?(true)
         let shown = expectation(description: "blocked notice shown")
         DispatchQueue.main.async { shown.fulfill() }
         wait(for: [shown], timeout: 1)
         XCTAssertTrue(session.deliveryBlocked)
+        XCTAssertEqual(session.inboxRecoveryBlocker, blocker)
+        session.skipUncertainMessage(blocker)
+        XCTAssertEqual(first.skipped, [blocker])
         XCTAssertTrue(session.requestDeliveryRecovery())
         XCTAssertEqual(first.recoveryCount, 1)
         XCTAssertEqual(session.phase, .running, "A signal is not proof of process exit")
@@ -27,10 +33,14 @@ final class EmbeddedTerminalSessionTests: XCTestCase {
         try session.beginPreparing(providerName: "Claude", workingDirectory: "/repo")
         try session.start(launch())
         staleNotice?(true)
+        staleInboxNotice?(blocker)
         let drained = expectation(description: "stale notice ignored")
         DispatchQueue.main.async { drained.fulfill() }
         wait(for: [drained], timeout: 1)
         XCTAssertFalse(session.deliveryBlocked)
+        XCTAssertNil(session.inboxRecoveryBlocker)
+        session.skipUncertainMessage(blocker)
+        XCTAssertTrue(second.skipped.isEmpty)
     }
     func testReadyHandlerRunsAfterTheCurrentProcessBecomesInteractive() throws {
         let process = FakeEmbeddedTerminalProcess()
@@ -908,6 +918,40 @@ final class RelayTerminalViewInputOriginTests: XCTestCase {
 }
 
 final class RelayVoiceCommandDeliveryTests: XCTestCase {
+    func testPersistedInboxBlockerSurfacesBeforeSubmissionAndSkipUsesExactIdentity() throws {
+        for provider in ["codex", "claude"] {
+            let fixture = try makeFixture()
+            let blocker = InboxRecoveryBlocker(intent_id: "old:item:1", command_seq: 94, command_id: "old", recovered_at: 123)
+            let encoded = try JSONEncoder().encode(blocker)
+            let blockerObject = try JSONSerialization.jsonObject(with: encoded)
+            let state: [String: Any] = ["inbox_recovery_blocker": blockerObject]
+            try JSONSerialization.data(withJSONObject: state).write(to: fixture.commandState)
+            try Data().write(to: fixture.voiceInput)
+            var notices: [InboxRecoveryBlocker?] = []
+            var sent: [String] = []
+            let delivery = RelayVoiceCommandDelivery(
+                paths: fixture.paths,
+                send: { sent.append(String(decoding: $0, as: UTF8.self)) },
+                onInboxRecoveryBlocked: { notices.append($0) },
+                isRunning: { true }, provider: provider
+            )
+            XCTAssertFalse(delivery.claimAndSendIfPossible())
+            XCTAssertEqual(notices, [blocker])
+            XCTAssertTrue(sent.isEmpty, "No terminal submission or automatic replay")
+            XCTAssertTrue(delivery.skipUncertainMessage(blocker))
+            let control = try String(contentsOf: fixture.voiceInput, encoding: .utf8)
+            XCTAssertTrue(control.hasPrefix("__SKIP_UNCERTAIN__:"))
+            let payload = String(control.dropFirst("__SKIP_UNCERTAIN__:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            XCTAssertEqual(try JSONDecoder().decode(InboxRecoveryBlocker.self, from: Data(payload.utf8)), blocker)
+            XCTAssertEqual(notices, [blocker], "A successful write is not a recovery acknowledgement")
+            try "{}".write(to: fixture.commandState, atomically: true, encoding: .utf8)
+            XCTAssertFalse(delivery.skipUncertainMessage(blocker), "Reject stale confirmation after a late acknowledgement")
+            XCTAssertFalse(delivery.claimAndSendIfPossible())
+            XCTAssertEqual(notices.count, 2)
+            XCTAssertNil(notices.last!)
+        }
+    }
+
     func testRecoveryDeadlineBlocksWithoutReplayAndExactLateAckReleasesQueuedCommand() throws {
         for provider in ["codex", "claude"] {
             let fixture = try makeFixture()
@@ -2773,6 +2817,12 @@ private func keyEvent(
 
 private final class FakeEmbeddedTerminalProcess: EmbeddedTerminalProcess {
     var onDeliveryBlocked: ((Bool) -> Void)?
+    var onInboxRecoveryBlocked: ((InboxRecoveryBlocker?) -> Void)?
+    var skipped: [InboxRecoveryBlocker] = []
+    func skipUncertainMessage(_ blocker: InboxRecoveryBlocker) -> Bool {
+        skipped.append(blocker)
+        return true
+    }
     var recoveryCount = 0
     func requestDeliveryRecovery() -> Bool {
         recoveryCount += 1

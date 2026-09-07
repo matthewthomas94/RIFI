@@ -787,6 +787,50 @@ class IntentInbox:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def recovery_blocker(self) -> dict[str, Any] | None:
+        """Expose one uncertain mailbox lease, without exposing its private prompt."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT intent_id, command_seq, command_id, recovered_at FROM intents "
+                "WHERE state='review_required' AND route!='run_sidecar' "
+                "ORDER BY command_seq, within_turn_order, ordinal LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def skip_recovery_blocker(self, expected: dict[str, Any]) -> bool:
+        """Explicit compare-and-skip; a stale confirmation cannot cancel new work."""
+        with self._lock, self._connection:
+            # Serialize the check with native acknowledgements on other connections.
+            self._connection.execute("BEGIN IMMEDIATE")
+            current = self.recovery_blocker()
+            if current is None or current != expected:
+                return False
+            # Known turns belong to acknowledgement/reconciliation, not skipping:
+            # active turns may still execute, terminal turns may have just finished.
+            if self.provider_turn_events_enabled and self._connection.execute(
+                "SELECT 1 FROM provider_turns WHERE intent_id=? LIMIT 1",
+                (current["intent_id"],),
+            ).fetchone() is not None:
+                return False
+            now = time.time()
+            self._connection.execute(
+                "UPDATE intents SET state='cancelled', cancelled_at=?, "
+                "recovery_decision='user_skipped_uncertain' "
+                "WHERE intent_id=? AND state='review_required'",
+                (now, current["intent_id"]),
+            )
+            if self.provider_turn_events_enabled:
+                record_intent_events(
+                    self._connection, [current["intent_id"]],
+                    event_type="intent_cancelled", event_scope="user_skipped_uncertain",
+                    occurred_at=now, terminal_state="cancelled",
+                    release_reason="user_skipped_uncertain",
+                )
+        self._project_provider_turns()
+        return True
+
     def cancelled_intent_ids(self) -> list[str]:
         with self._lock:
             rows = self._connection.execute(
@@ -813,6 +857,7 @@ def sync_deliverable_state(state_path: str, inbox: IntentInbox) -> None:
             payload = {**(latest_command or {}), **payload}
     payload["intent_inbox_version"] = SCHEMA_VERSION
     payload["deliverable_commands"] = deliverable
+    payload["inbox_recovery_blocker"] = inbox.recovery_blocker()
     payload["cancelled_intent_ids"] = inbox.cancelled_intent_ids()
     payload["source_command_intents"] = inbox.source_command_intents(payload)
     tmp = state_path + ".tmp"

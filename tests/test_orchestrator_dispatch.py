@@ -1874,6 +1874,35 @@ class OrchestratorDispatchTests(unittest.TestCase):
             self.assertEqual(updated["exit_code"], 0)
             self.assertIn("physical input unavailable", updated["last_error"])
 
+    def test_exit_zero_incomplete_run_explains_failure_and_preserves_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            report = workspace / "findings.md"
+            report.write_text("Further evidence needed.")
+            agent = root / "agent.sh"
+            agent.write_text("#!/bin/sh\nexit 0\n")
+            os.chmod(agent, 0o755)
+            store = RunsStore(root / "runs.db")
+            run_id = store.insert(ticket_id="RR-1", repo_path=str(workspace),
+                                  workspace_path=str(workspace), branch="relay/rr-1", state="Claimed")
+            events = []
+            worker = Worker(run_id=run_id, run=store.get(run_id), prompt="prompt",
+                            agent_bin=str(agent), agent_kind="codex", store=store,
+                            log_path=root / "run.log",
+                            emit_lifecycle=lambda kind, **fields: events.append((kind, fields)))
+            with patch.object(worker, "_command", return_value=[str(agent)]), patch(
+                "orchestrator.validate_worker_outcome",
+                return_value=("in_progress", "ticket status is in_progress"),
+            ):
+                worker._run()
+            self.assertEqual(store.get(run_id)["state"], "Failed")
+            failure = [fields for kind, fields in events if kind == "run-failed"][-1]
+            self.assertIn("completion contract", failure["message"])
+            self.assertIn("saved findings", failure["message"])
+            self.assertEqual(report.read_text(), "Further evidence needed.")
+
     def test_inspect_run_for_review_returns_branch_logs_and_diff_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

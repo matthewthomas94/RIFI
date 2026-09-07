@@ -27,6 +27,8 @@ The persistent orchestrator may have attached extra context for this ticket. Tre
 
 5. **Plan briefly.** Decide what files to read, what to change, and what success looks like. Don't over-plan — this isn't a phase; it's one ticket.
 
+   **Research boundaries.** This is the implementation workflow, even if the title contains "Spike". Writable experiments must satisfy this ticket's acceptance before declaring completion. A report-only task may legitimately conclude "further evidence needed" when that is its defined deliverable; it must not claim outstanding measurements passed. Missing prerequisites should have been resolved by the PM before dispatch. If you discover missing inputs, preserve completed findings, name the exact inputs and unmet acceptance, and report partial work clearly. Exiting successfully with `in_progress` is recorded as an incomplete run, not a completed research result. Read-only structured spikes use the separate spike execution mode.
+
 6. **Implement.** Make the smallest change that satisfies the ticket. Match the project's existing style. Don't add speculative features. Don't refactor adjacent code that isn't broken. (See the global `AGENTS.md`/`CLAUDE.md` Karpathy guidelines for the runtime you're using.)
 
    **Provider parity.** If the ticket touches provider-facing behavior for Codex or Claude, explicitly consider the equivalent user experience for every supported provider, not only the provider named in the request. Provider-specific commands, flags, auth paths, model names, permissions, and limitations are allowed, but intentional differences must be documented in the ticket, implementation notes, or run log.

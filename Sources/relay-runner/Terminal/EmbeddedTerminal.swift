@@ -12,6 +12,8 @@ protocol EmbeddedTerminalProcess: AnyObject {
     var onExit: ((Int32?) -> Void)? { get set }
     var onReady: (() -> Void)? { get set }
     var onTitle: ((String) -> Void)? { get set }
+    var onDeliveryBlocked: ((Bool) -> Void)? { get set }
+    func requestDeliveryRecovery() -> Bool
 
     func start(_ launch: ProcessManager.PreparedSessionLaunch) throws
     func focus()
@@ -61,6 +63,8 @@ final class EmbeddedTerminalSession {
     private(set) var workingDirectory = FileManager.default.homeDirectoryForCurrentUser.path
     private(set) var terminalTitle = ""
     private(set) var presentationRevision = 0
+    private(set) var deliveryBlocked = false
+    var deliveryRecoveryMessage: String?
 
     @ObservationIgnored private let processFactory: ProcessFactory
     @ObservationIgnored private var process: EmbeddedTerminalProcess?
@@ -100,6 +104,8 @@ final class EmbeddedTerminalSession {
         self.providerKey = providerKey
         self.workingDirectory = workingDirectory
         terminalTitle = ""
+        deliveryBlocked = false
+        deliveryRecoveryMessage = nil
         diagnostics = recordDiagnostics
             ? EmbeddedAgentDiagnostics.start(
                 provider: providerKey ?? providerName.lowercased(),
@@ -121,6 +127,13 @@ final class EmbeddedTerminalSession {
         )
 
         let next = processFactory()
+        next.onDeliveryBlocked = { [weak self, weak next] blocked in
+            DispatchQueue.main.async {
+                guard let self, let next, self.process === next,
+                      self.phase == .running || self.phase == .starting else { return }
+                self.deliveryBlocked = blocked
+            }
+        }
         next.onTitle = { [weak self, weak next] title in
             guard let self, let next, self.process === next else { return }
             self.terminalTitle = title
@@ -257,6 +270,8 @@ final class EmbeddedTerminalSession {
     }
 
     func end() {
+        deliveryBlocked = false
+        process?.onDeliveryBlocked = nil
         process?.onExit = nil
         process?.onReady = nil
         process?.onTitle = nil
@@ -268,6 +283,8 @@ final class EmbeddedTerminalSession {
     }
 
     func shutdown() {
+        deliveryBlocked = false
+        process?.onDeliveryBlocked = nil
         process?.onExit = nil
         process?.onReady = nil
         process?.onTitle = nil
@@ -282,6 +299,11 @@ final class EmbeddedTerminalSession {
 
     func focus() {
         process?.focus()
+    }
+
+    func requestDeliveryRecovery() -> Bool {
+        guard deliveryBlocked, isEmbeddedProcessRunning else { return false }
+        return process?.requestDeliveryRecovery() == true
     }
 
     func updateTitle(_ title: String) {
@@ -698,6 +720,7 @@ final class RelayVoiceCommandDelivery {
         case promptWritten(PendingSubmission)
         case awaitingAcknowledgement(PendingSubmission)
         case recovering(PendingSubmission, since: Date)
+        case blocked(PendingSubmission)
         case acknowledged(RelayCommandKey)
         case superseded(RelayCommandKey)
         case terminalFailure(RelayCommandKey)
@@ -722,6 +745,8 @@ final class RelayVoiceCommandDelivery {
     private let schedule: Schedule
     private let submitDelay: TimeInterval
     private let acknowledgementTimeout: TimeInterval
+    private let recoveryTimeout: TimeInterval
+    private let onDeliveryBlocked: (Bool) -> Void
     private let clearedDraftSafetyDelay: TimeInterval
     private let deferralDiagnosticInterval: TimeInterval
     private let isRunning: () -> Bool
@@ -749,6 +774,8 @@ final class RelayVoiceCommandDelivery {
         transportSend: TransportSend? = nil,
         submitDelay: TimeInterval = 0.12,
         acknowledgementTimeout: TimeInterval = 2.0,
+        recoveryTimeout: TimeInterval = 10.0,
+        onDeliveryBlocked: @escaping (Bool) -> Void = { _ in },
         clearedDraftSafetyDelay: TimeInterval = 0.25,
         deferralDiagnosticInterval: TimeInterval = 5.0,
         schedule: @escaping Schedule = { delay, queue, work in
@@ -771,6 +798,8 @@ final class RelayVoiceCommandDelivery {
         }
         self.submitDelay = submitDelay
         self.acknowledgementTimeout = acknowledgementTimeout
+        self.recoveryTimeout = max(0, recoveryTimeout)
+        self.onDeliveryBlocked = onDeliveryBlocked
         self.clearedDraftSafetyDelay = max(0, clearedDraftSafetyDelay)
         self.deferralDiagnosticInterval = max(0.25, deferralDiagnosticInterval)
         self.schedule = schedule
@@ -1166,7 +1195,7 @@ final class RelayVoiceCommandDelivery {
         switch deliveryState {
         case .promptWritten(let pending),
              .awaitingAcknowledgement(let pending),
-             .recovering(let pending, _):
+             .recovering(let pending, _), .blocked(let pending):
             return pending
         default:
             return nil
@@ -1175,6 +1204,14 @@ final class RelayVoiceCommandDelivery {
 
     private var hasSubmittedVoicePrompt: Bool {
         openSubmission != nil
+    }
+
+    var isDeliveryBlocked: Bool {
+        var blocked = false
+        performOnDeliveryQueue {
+            if case .blocked = deliveryState { blocked = true }
+        }
+        return blocked
     }
 
     private var manualInputBufferKey: RelayCommandKey? {
@@ -1707,6 +1744,7 @@ final class RelayVoiceCommandDelivery {
             fields: ["attempt": 1, "provider_turn_state": state]
         )
         recordDeliveryEvent("delivery_acknowledged", key: pending.key)
+        onDeliveryBlocked(false)
         deliveryState = .acknowledged(pending.key)
         return true
     }
@@ -1740,7 +1778,7 @@ final class RelayVoiceCommandDelivery {
     private func scheduleRecoveryPoll(for key: RelayCommandKey) {
         schedule(min(max(acknowledgementTimeout, 0.1), 0.5), queue) { [weak self] in
             guard let self,
-                  case .recovering(let pending, _) = self.deliveryState,
+                  case .recovering(let pending, let since) = self.deliveryState,
                   pending.key == key else { return }
             self.touchHeartbeat()
             if self.completePendingSubmissionIfAcknowledged() {
@@ -1748,6 +1786,12 @@ final class RelayVoiceCommandDelivery {
             }
             guard self.isRunning() else {
                 self.failPendingSubmission(pending, event: "provider_process_terminated")
+                return
+            }
+            if self.now().timeIntervalSince(since) >= self.recoveryTimeout {
+                self.deliveryState = .blocked(pending)
+                self.recordDeliveryEvent("recovery_blocked", key: key)
+                self.onDeliveryBlocked(true)
                 return
             }
             self.scheduleRecoveryPoll(for: key)
@@ -1767,6 +1811,7 @@ final class RelayVoiceCommandDelivery {
         recordDeliveryEvent(event, key: pending.key, fields: ["attempt": 1])
         let published = publishDeliveryFailure(for: pending.key)
         deliveryState = .terminalFailure(pending.key)
+        onDeliveryBlocked(false)
         recordDeliveryEvent(
             published ? "delivery_failure_published" : "delivery_failure_publish_failed",
             key: pending.key
@@ -2408,6 +2453,15 @@ final class SwiftTermEmbeddedProcess: EmbeddedTerminalProcess, TerminalViewDeleg
     var onExit: ((Int32?) -> Void)?
     var onReady: (() -> Void)?
     var onTitle: ((String) -> Void)?
+    var onDeliveryBlocked: ((Bool) -> Void)?
+
+    func requestDeliveryRecovery() -> Bool {
+        guard voiceDelivery?.isDeliveryBlocked == true,
+              localProcess.running, let pid = childPID else { return false }
+        // Wait for the process-exit callback; do not release uncertain ownership
+        // or launch a replacement merely because SIGTERM was sent.
+        return kill(pid_t(pid), SIGTERM) == 0
+    }
     private var voiceDelivery: RelayVoiceCommandDelivery?
     private var sessionEventPath: String?
     private var readinessScheduled = false
@@ -2503,6 +2557,9 @@ final class SwiftTermEmbeddedProcess: EmbeddedTerminalProcess, TerminalViewDeleg
                 },
                 transportSend: transportSend,
                 acknowledgementTimeout: voiceDeliveryAcknowledgementTimeout,
+                onDeliveryBlocked: { [weak self] blocked in
+                    self?.onDeliveryBlocked?(blocked)
+                },
                 isRunning: { [weak self] in
                     self?.localProcess.running == true
                 },
@@ -2688,10 +2745,26 @@ struct EmbeddedTerminalTab: View {
     @Bindable var session: EmbeddedTerminalSession
     let providerName: String
     let workingDirectory: String
+    let recoverDelivery: () -> Void
+    @State private var confirmsRecovery = false
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+            if session.deliveryBlocked {
+                HStack {
+                    Text(session.deliveryRecoveryMessage ?? "Session delivery blocked. The last message was not acknowledged; later messages remain queued. Restart skips the uncertain message—check its outcome before repeating it.")
+                        .font(AppTypography.font(.status))
+                    Button("Restart session") { confirmsRecovery = true }
+                }
+                .padding(14)
+                .background(Color.orange.opacity(0.12))
+                .confirmationDialog("Restart the blocked session?", isPresented: $confirmsRecovery) {
+                    Button("Restart session", role: .destructive, action: recoverDelivery)
+                } message: {
+                    Text("This ends the foreground agent. Worker runs and queued messages are preserved. The uncertain message will not be automatically repeated.")
+                }
+            }
             if case .failed(let message) = session.phase {
                 Text(message)
                     .font(AppTypography.font(.status))
@@ -2803,7 +2876,8 @@ struct WorkspaceTerminalPanel: View {
         EmbeddedTerminalTab(
             session: appState.embeddedTerminal,
             providerName: appState.config.general.provider.displayName,
-            workingDirectory: resolvedWorkingDirectory
+            workingDirectory: resolvedWorkingDirectory,
+            recoverDelivery: { appState.recoverBlockedVoiceDelivery() }
         )
     }
 

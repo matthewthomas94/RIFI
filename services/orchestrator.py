@@ -3836,6 +3836,23 @@ def _spike_text(value: Any, *, field: str, max_length: int = 600) -> str:
     return text
 
 
+def validate_research_dispatch(ticket: dict, contents: str) -> None:
+    """Require an explicit research contract and resolve declared prerequisites."""
+    frontmatter = contents.split("---", 2)[1]
+    if str(ticket.get("title", "")).lower().startswith("spike:") and not re.search(
+        r"(?m)^execution_mode:\s*\S+", frontmatter
+    ):
+        raise ValueError(
+            "Research execution mode must be explicit before dispatch: choose spike "
+            "for read-only findings, or implementation for writable prototypes/benchmarks."
+        )
+    required_inputs = re.search(
+        r"(?ms)^## Required inputs\s*\n(.*?)(?=^## |\Z)", ticket.get("body", "")
+    )
+    if required_inputs and re.search(r"(?m)^\s*- \[ \]", required_inputs.group(1)):
+        raise ValueError("Resolve the ticket's Required inputs before dispatch; no worker was started.")
+
+
 def validate_spike_result(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("spike result is not an object")
@@ -4406,7 +4423,13 @@ class Worker:
                             ended=True,
                             exit_code=rc,
                         )
-                        self._emit_lifecycle("run-failed")
+                        self._emit_lifecycle(
+                            "run-failed",
+                            message=(f"{self.run['ticket_id']} run {self.run_id} stopped without "
+                                     "satisfying its completion contract. The worker exited successfully; "
+                                     "saved findings remain available in the run worktree/log. "
+                                     f"Review the ticket's outstanding requirements: {reason}"),
+                        )
             elif rc in (-9, -15):
                 self.store.update(self.run_id, state="Canceled", ended=True, exit_code=rc)
                 self._emit_lifecycle("run-canceled")
@@ -7133,6 +7156,7 @@ Title: {ticket['title']}
         except (OSError, TicketParseError) as e:
             raise ValueError(f"ticket {ticket_id} could not be read: {e}") from e
         execution_mode = _execution_mode(ticket.get("execution_mode"))
+        validate_research_dispatch(ticket, ticket_file.read_text())
         if artifact_lifecycle is not None and execution_mode == SPIKE_EXECUTION_MODE:
             raise ValueError(
                 "artifact lifecycle does not yet own branchless spike results; "

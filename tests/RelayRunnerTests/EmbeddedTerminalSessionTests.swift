@@ -5,6 +5,33 @@ import XCTest
 @testable import relay_runner
 
 final class EmbeddedTerminalSessionTests: XCTestCase {
+    func testBlockedNoticeIsOwnedByCurrentProcessAndRecoveryWaitsForExit() throws {
+        let first = FakeEmbeddedTerminalProcess()
+        let second = FakeEmbeddedTerminalProcess()
+        var processes = [first, second]
+        let session = EmbeddedTerminalSession(processFactory: { processes.removeFirst() })
+        try session.beginPreparing(providerName: "Codex", workingDirectory: "/repo")
+        try session.start(launch())
+        XCTAssertFalse(session.requestDeliveryRecovery())
+        let staleNotice = first.onDeliveryBlocked
+        first.onDeliveryBlocked?(true)
+        let shown = expectation(description: "blocked notice shown")
+        DispatchQueue.main.async { shown.fulfill() }
+        wait(for: [shown], timeout: 1)
+        XCTAssertTrue(session.deliveryBlocked)
+        XCTAssertTrue(session.requestDeliveryRecovery())
+        XCTAssertEqual(first.recoveryCount, 1)
+        XCTAssertEqual(session.phase, .running, "A signal is not proof of process exit")
+        XCTAssertEqual(second.startCount, 0)
+        session.end()
+        try session.beginPreparing(providerName: "Claude", workingDirectory: "/repo")
+        try session.start(launch())
+        staleNotice?(true)
+        let drained = expectation(description: "stale notice ignored")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 1)
+        XCTAssertFalse(session.deliveryBlocked)
+    }
     func testReadyHandlerRunsAfterTheCurrentProcessBecomesInteractive() throws {
         let process = FakeEmbeddedTerminalProcess()
         process.autoReady = false
@@ -881,6 +908,53 @@ final class RelayTerminalViewInputOriginTests: XCTestCase {
 }
 
 final class RelayVoiceCommandDeliveryTests: XCTestCase {
+    func testRecoveryDeadlineBlocksWithoutReplayAndExactLateAckReleasesQueuedCommand() throws {
+        for provider in ["codex", "claude"] {
+            let fixture = try makeFixture()
+            let first = "{\"provider\":\"\(provider)\",\"relay_command_id\":\"cmd-94\",\"relay_command_seq\":94}"
+            try "First message\n".write(to: fixture.command, atomically: true, encoding: .utf8)
+            try first.write(to: fixture.metadata, atomically: true, encoding: .utf8)
+            try first.write(to: fixture.commandState, atomically: true, encoding: .utf8)
+            var clock = Date()
+            var scheduled: [() -> Void] = []
+            var blocked: [Bool] = []
+            var sent: [String] = []
+            let delivery = RelayVoiceCommandDelivery(
+                paths: fixture.paths,
+                send: { sent.append(String(decoding: $0, as: UTF8.self)) },
+                recoveryTimeout: 10,
+                onDeliveryBlocked: { blocked.append($0) },
+                schedule: { _, _, work in scheduled.append(work) },
+                isRunning: { true }, now: { clock }
+            )
+            XCTAssertTrue(delivery.claimAndSendIfPossible())
+            scheduled[0]()
+            scheduled[1]()
+            clock.addTimeInterval(10)
+            scheduled[2]()
+            XCTAssertTrue(delivery.isDeliveryBlocked)
+            XCTAssertEqual(blocked, [true])
+            XCTAssertEqual(scheduled.count, 3, "Recovery must stop scheduling endless polls")
+
+            let second = "{\"provider\":\"\(provider)\",\"relay_command_id\":\"cmd-95\",\"relay_command_seq\":95}"
+            try "Second message\n".write(to: fixture.command, atomically: true, encoding: .utf8)
+            try second.write(to: fixture.metadata, atomically: true, encoding: .utf8)
+            try second.write(to: fixture.commandState, atomically: true, encoding: .utf8)
+            try writeProviderTurns([providerTurn(seq: 93, id: "cmd-93", provider: provider, state: "completed_final")], to: fixture.providerTurns)
+            XCTAssertFalse(delivery.claimAndSendIfPossible())
+            XCTAssertTrue(delivery.isDeliveryBlocked)
+            XCTAssertEqual(sent, ["First message", "\r"])
+            XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.command.path))
+
+            try writeProviderTurns([providerTurn(seq: 94, id: "cmd-94", provider: provider, state: "completed_final")], to: fixture.providerTurns)
+            XCTAssertTrue(delivery.claimAndSendIfPossible())
+            XCTAssertFalse(delivery.isDeliveryBlocked)
+            XCTAssertEqual(blocked, [true, false])
+            XCTAssertTrue(delivery.claimAndSendIfPossible())
+            XCTAssertEqual(sent, ["First message", "\r", "Second message"])
+        }
+    }
+
     func testClaimPublishesMetadataBeforeSubmitAndWaitsForProviderAcknowledgement() throws {
         let fixture = try makeFixture()
         try "Fix the bridge\n".write(to: fixture.command, atomically: true, encoding: .utf8)
@@ -2698,6 +2772,12 @@ private func keyEvent(
 }
 
 private final class FakeEmbeddedTerminalProcess: EmbeddedTerminalProcess {
+    var onDeliveryBlocked: ((Bool) -> Void)?
+    var recoveryCount = 0
+    func requestDeliveryRecovery() -> Bool {
+        recoveryCount += 1
+        return true
+    }
     let view = NSView()
     var isRunning = false
     var hasFocus = false

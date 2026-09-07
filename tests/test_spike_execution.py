@@ -29,6 +29,26 @@ from tickets import read as read_ticket  # noqa: E402
 
 
 class SpikeExecutionTests(unittest.TestCase):
+    def test_research_dispatch_requires_explicit_mode_without_changing_legacy_defaults(self):
+        with self.assertRaisesRegex(ValueError, "execution mode must be explicit"):
+            orchestrator.validate_research_dispatch(
+                {"title": "Spike: investigate voices"}, "---\ntitle: Spike: investigate voices\n---\n"
+            )
+        for mode in ("spike", "implementation"):
+            orchestrator.validate_research_dispatch(
+                {"title": "Spike: investigate voices"}, f"---\nexecution_mode: {mode}\n---\n"
+            )
+        orchestrator.validate_research_dispatch({"title": "Fix a bug"}, "---\ntitle: Fix a bug\n---\n")
+
+    def test_unresolved_required_inputs_block_dispatch_but_uncertainties_do_not(self):
+        for mode in ("spike", "implementation"):
+            contents = f"---\nexecution_mode: {mode}\n---\n"
+            ticket = {"title": "Spike: investigate voices", "body": "## Required inputs\n- [ ] Consented reference\n\n## Acceptance criteria\n- [ ] Report findings\n"}
+            with self.assertRaisesRegex(ValueError, "Required inputs"):
+                orchestrator.validate_research_dispatch(ticket, contents)
+            ticket["body"] = ticket["body"].replace("[ ] Consented", "[x] Consented")
+            orchestrator.validate_research_dispatch(ticket, contents)
+
     def test_legacy_ticket_defaults_to_implementation_and_spike_round_trips(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

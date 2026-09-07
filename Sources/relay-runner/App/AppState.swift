@@ -306,6 +306,7 @@ final class AppState {
     @ObservationIgnored private var releasedContinuityProviderTargets: Set<String> = []
     @ObservationIgnored private var continuityRecoveryCooldowns: [String: CFTimeInterval] = [:]
     @ObservationIgnored private var pendingContinuityProviderReady: ContinuityProviderReadyContext?
+    @ObservationIgnored private var userDeliveryRecoveryPending = false
     @ObservationIgnored private let projectRegistryV2 = ProjectRegistryV2Service.makeIfEnabled()
     @ObservationIgnored private let projectScopeCoordinator = ProjectScopeCoordinator()
     @ObservationIgnored private var activeSessionProjectScopeToken: ConfirmedProjectScopeToken?
@@ -882,6 +883,43 @@ final class AppState {
         startOverlay()
     }
 
+    /// Explicit user recovery preserves the bridge and waits for provider exit.
+    func recoverBlockedVoiceDelivery() {
+        guard !userDeliveryRecoveryPending else { return }
+        guard embeddedTerminal.deliveryBlocked,
+              let launch = activeSessionLaunchConfig,
+              processManager.bridgeAlive(),
+              let claim = ProcessManager.currentRelayClaimIdentity(),
+              let commandID = claim["relay_command_id"] as? String,
+              let generation = continuityRecoveryGenerationBySession[
+                ContinuityRecoveryRequest.projectSessionIdentifier(
+                    repositoryPath: launch.general.working_directory
+                )
+              ],
+              let previousSessionID = ProcessManager.currentProviderSessionID()
+        else {
+            embeddedTerminal.deliveryRecoveryMessage = "Session delivery blocked. Recovery ownership is unavailable; the session and queued messages were left untouched."
+            return
+        }
+        pendingContinuityProviderReady = ContinuityProviderReadyContext(
+            nativeCommandID: commandID,
+            commandID: ContinuityRecoveryRequest.opaqueIdentifier(kind: "command", nativeValue: commandID),
+            provider: launch.general.provider.rawValue,
+            recoveryGeneration: generation,
+            previousProviderSessionID: previousSessionID,
+            providerSessionID: nil,
+            appSessionID: nil,
+            foregroundGateHandle: nil
+        )
+        userDeliveryRecoveryPending = true
+        embeddedTerminal.deliveryRecoveryMessage = "Restart requested. Waiting for the old provider to exit; queued messages are preserved."
+        if !embeddedTerminal.requestDeliveryRecovery() {
+            userDeliveryRecoveryPending = false
+            pendingContinuityProviderReady = nil
+            embeddedTerminal.deliveryRecoveryMessage = "The blocked session could not be stopped. No replacement was launched; queued messages are preserved."
+        }
+    }
+
     /// End the active voice session and revert to awareness mode.
     func endSession() {
         embeddedTerminal.end()
@@ -889,6 +927,25 @@ final class AppState {
     }
 
     private func embeddedTerminalDidExit(exitCode: Int32?) {
+        if userDeliveryRecoveryPending {
+            userDeliveryRecoveryPending = false
+            if let launch = activeSessionLaunchConfig,
+               let context = pendingContinuityProviderReady {
+                let started = newSession(
+                    workingDirectory: launch.general.working_directory,
+                    suppressesStartupGreeting: true,
+                    recoveryGeneration: context.recoveryGeneration,
+                    preservesVoiceBridge: true
+                )
+                if !started {
+                    stateMachine.showProgramStatus(
+                        title: "Session recovery could not start",
+                        body: "The old provider has exited. The voice bridge and queued messages were retained; review the session launch error before trying again."
+                    )
+                }
+            }
+            return
+        }
         let earlyFailureMessage: String?
         if case .failed(let message) = embeddedTerminal.phase {
             earlyFailureMessage = message
@@ -908,6 +965,7 @@ final class AppState {
     }
 
     private func resetActiveSessionState() {
+        userDeliveryRecoveryPending = false
         processManager.killBridge(stopRequested: true)
         menuSessionActive = false
         activeSessionLaunchConfig = nil

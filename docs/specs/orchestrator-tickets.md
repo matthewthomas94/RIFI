@@ -30,6 +30,10 @@ Everything lives under `.orchestrator/` at the repo root. No nesting.
 
 ### `config.toml`
 
+Research tickets must explicitly choose `execution_mode: spike` (read-only structured findings) or `execution_mode: implementation` (writable prototypes/benchmarks). A `Spike:` title without an explicit mode is rejected before dispatch. Other legacy tickets retain their implementation default.
+
+List dispatch prerequisites under `## Required inputs` using task-list items. Any unchecked item blocks dispatch before a workspace or worker is created. This section is distinct from acceptance criteria: it records inputs needed to begin, not unfinished work for the worker to perform. A structured spike may finish with evidence-backed uncertainties; this does not waive required measurements on implementation tickets or authorize follow-on work.
+
 ```toml
 prefix = "RR"            # example ticket ID prefix for relay-runner
 next_id = 14             # monotonic counter; incremented on each new ticket

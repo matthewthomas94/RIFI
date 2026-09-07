@@ -16,6 +16,10 @@ Relay Runner supports multiple agent providers, especially Codex and Claude. Whe
 
 ### Worker sizing
 
+For research, explicitly choose `execution_mode` before dispatch; a "Spike:" title is not an execution mode. Use `spike` for read-only investigation and a structured report with conclusions, evidence, uncertainties, and next steps. A supported further-evidence or no-go conclusion is a valid result, not a failed implementation. Writable prototypes and benchmarks belong in separately scoped `implementation` work. Do not weaken read-only isolation or ordinary implementation completion checks.
+
+Before dispatch, identify any user decision, consented reference input, or environment access necessary to meet acceptance. Record unresolved prerequisites as unchecked items under `## Required inputs`; the dispatcher refuses these until resolved. Do not promise subjective or physical validation in a research-only task without the required human input. Do not silently check prerequisites or dispatch follow-on work when reporting uncertainties.
+
 Every ticket promoted to `ready` must include an explicit worker-sizing decision in frontmatter before dispatch:
 
 - `worker_model`: `fast`, `balanced`, `strong`, or a provider-scoped stable override such as `codex:luna` or `claude:sonnet`.

@@ -1157,6 +1157,7 @@ final class RelayVoiceCommandDeliveryTests: XCTestCase {
 
             XCTAssertTrue(delivery.claimAndSendIfPossible(), provider)
             XCTAssertEqual(transportQueue.map(\.bytes), [Array(command.utf8)], provider)
+            XCTAssertTrue(scheduled.isEmpty, "Return delay must not start while the prompt is still waiting on the main queue")
             let promptWrite = transportQueue.removeFirst()
             ptyWrites.append(promptWrite.bytes)
             promptWrite.confirmation()
@@ -2663,6 +2664,19 @@ final class RelayVoiceCommandDeliveryTests: XCTestCase {
         )
         XCTAssertEqual(RelayVoiceCommandDelivery.providerInputEvents(for: "__INTERRUPT__"), [[3]])
         XCTAssertNil(RelayVoiceCommandDelivery.providerInputEvents(for: "__BRIDGE_DIED__"))
+    }
+
+    func testPromptPasteFramingKeepsMultilineTextSeparateFromReturn() {
+        let bytes = Array("Reply exactly: Recovery test one.\n\nRelay disposition: continue_current".utf8)
+        XCTAssertEqual(SwiftTermEmbeddedProcess.promptBytes(bytes, bracketedPaste: false), bytes)
+        XCTAssertEqual(
+            SwiftTermEmbeddedProcess.promptBytes(bytes, bracketedPaste: true),
+            [27, 91, 50, 48, 48, 126] + bytes + [27, 91, 50, 48, 49, 126]
+        )
+        XCTAssertEqual(
+            RelayVoiceCommandDelivery.providerInputEvents(for: String(decoding: bytes, as: UTF8.self))?.last,
+            [13], "Submit is one separate Return, never part of the paste"
+        )
     }
 
     private func makeFixture() throws -> (

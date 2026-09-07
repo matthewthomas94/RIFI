@@ -773,6 +773,7 @@ final class RelayVoiceCommandDelivery {
     private let paths: Paths
     private let send: Send
     private let transportSend: TransportSend
+    private let promptSend: TransportSend
     private let schedule: Schedule
     private let submitDelay: TimeInterval
     private let acknowledgementTimeout: TimeInterval
@@ -805,6 +806,7 @@ final class RelayVoiceCommandDelivery {
         paths: Paths = Paths(),
         send: @escaping Send,
         transportSend: TransportSend? = nil,
+        promptSend: TransportSend? = nil,
         submitDelay: TimeInterval = 0.12,
         acknowledgementTimeout: TimeInterval = 2.0,
         recoveryTimeout: TimeInterval = 10.0,
@@ -830,6 +832,7 @@ final class RelayVoiceCommandDelivery {
             send(data)
             confirmation()
         }
+        self.promptSend = promptSend ?? self.transportSend
         self.submitDelay = submitDelay
         self.acknowledgementTimeout = acknowledgementTimeout
         self.recoveryTimeout = max(0, recoveryTimeout)
@@ -1161,27 +1164,35 @@ final class RelayVoiceCommandDelivery {
             submittedAt: now()
         )
         deliveryState = .promptWritten(pending)
-        send(ArraySlice(first))
-        recordDeliveryEvent("prompt_write", key: key)
-        schedule(submitDelay, queue) { [weak self] in
+        promptSend(ArraySlice(first)) { [weak self] in
             guard let self else { return }
-            guard case .promptWritten(let current) = self.deliveryState,
-                  current.key == key else { return }
-            guard self.isRunning() else {
-                self.failPendingSubmission(current, event: "provider_process_terminated")
-                return
+            self.performOnDeliveryQueue {
+                guard case .promptWritten(let current) = self.deliveryState,
+                      current.key == key else { return }
+                self.recordDeliveryEvent("prompt_write", key: key)
+                // The main queue may be busy presenting UI. Start the delay
+                // after the paste write, not when that write was enqueued.
+                self.schedule(self.submitDelay, self.queue) { [weak self] in
+                    guard let self else { return }
+                    guard case .promptWritten(let current) = self.deliveryState,
+                          current.key == key else { return }
+                    guard self.isRunning() else {
+                        self.failPendingSubmission(current, event: "provider_process_terminated")
+                        return
+                    }
+                    self.touchHeartbeat()
+                    if !self.isCommandCurrent(key) {
+                        self.send(ArraySlice([21]))
+                        self.deliveryState = .superseded(key)
+                        self.recordDeliveryEvent("stale_prompt_cleared", key: key)
+                        _ = self.replayBufferedManualInputIfPossible()
+                        return
+                    }
+                    self.writeClaimedMetadata(command.metadata)
+                    self.recordDeliveryEvent("claim_published", key: key)
+                    self.sendPendingSubmissionEvents(current)
+                }
             }
-            self.touchHeartbeat()
-            if !self.isCommandCurrent(key) {
-                self.send(ArraySlice([21]))
-                self.deliveryState = .superseded(key)
-                self.recordDeliveryEvent("stale_prompt_cleared", key: key)
-                _ = self.replayBufferedManualInputIfPossible()
-                return
-            }
-            self.writeClaimedMetadata(command.metadata)
-            self.recordDeliveryEvent("claim_published", key: key)
-            self.sendPendingSubmissionEvents(current)
         }
         return true
     }
@@ -2503,6 +2514,10 @@ final class EmbeddedAgentDiagnostics {
 }
 
 final class SwiftTermEmbeddedProcess: EmbeddedTerminalProcess, TerminalViewDelegate, LocalProcessDelegate {
+    static func promptBytes(_ bytes: [UInt8], bracketedPaste: Bool) -> [UInt8] {
+        guard bracketedPaste else { return bytes }
+        return EscapeSequences.bracketedPasteStart + bytes + EscapeSequences.bracketedPasteEnd
+    }
     static let defaultReadinessStabilityInterval: TimeInterval = 1.0
     static let defaultReadinessPollInterval: TimeInterval = 0.05
 
@@ -2609,7 +2624,8 @@ final class SwiftTermEmbeddedProcess: EmbeddedTerminalProcess, TerminalViewDeleg
             let transportSend: RelayVoiceCommandDelivery.TransportSend = { [weak self] data, confirmation in
                 let bytes = Array(data)
                 DispatchQueue.main.async { [weak self] in
-                    self?.localProcess.send(data: ArraySlice(bytes))
+                    guard let self, self.localProcess.running else { return }
+                    self.localProcess.send(data: ArraySlice(bytes))
                     confirmation()
                 }
             }
@@ -2619,6 +2635,20 @@ final class SwiftTermEmbeddedProcess: EmbeddedTerminalProcess, TerminalViewDeleg
                     transportSend(data) {}
                 },
                 transportSend: transportSend,
+                promptSend: { [weak self] data, confirmation in
+                    let bytes = Array(data)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.localProcess.running else { return }
+                        // Match native terminal paste semantics for both providers.
+                        // Keep Return outside the paste so it submits the composer.
+                        let framed = Self.promptBytes(
+                            bytes,
+                            bracketedPaste: self.terminalView.getTerminal().bracketedPasteMode
+                        )
+                        self.localProcess.send(data: ArraySlice(framed))
+                        confirmation()
+                    }
+                },
                 acknowledgementTimeout: voiceDeliveryAcknowledgementTimeout,
                 onDeliveryBlocked: { [weak self] blocked in
                     self?.onDeliveryBlocked?(blocked)

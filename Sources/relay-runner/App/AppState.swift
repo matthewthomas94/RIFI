@@ -41,6 +41,7 @@ final class AppState {
         let providerSessionID: String?
         let appSessionID: String?
         let foregroundGateHandle: String?
+        var discardUnacknowledgedClaim = false
 
         func authorizingReplacement(
             providerSessionID: String?,
@@ -63,7 +64,8 @@ final class AppState {
                 previousProviderSessionID: previousProviderSessionID,
                 providerSessionID: providerSessionID,
                 appSessionID: appSessionID,
-                foregroundGateHandle: foregroundGateHandle
+                foregroundGateHandle: foregroundGateHandle,
+                discardUnacknowledgedClaim: discardUnacknowledgedClaim
             )
         }
 
@@ -97,6 +99,7 @@ final class AppState {
                 "app_session_id": appSessionID,
                 "actor_role": "foreground_pm",
                 "foreground_gate_handle": foregroundGateHandle,
+                "discard_unacknowledged_claim": discardUnacknowledgedClaim,
             ]
             for field in [
                 "relay_command_seq",
@@ -912,6 +915,7 @@ final class AppState {
             foregroundGateHandle: nil
         )
         userDeliveryRecoveryPending = true
+        pendingContinuityProviderReady?.discardUnacknowledgedClaim = true
         embeddedTerminal.deliveryRecoveryMessage = "Restart requested. Waiting for the old provider to exit; queued messages are preserved."
         if !embeddedTerminal.requestDeliveryRecovery() {
             userDeliveryRecoveryPending = false

@@ -2899,6 +2899,7 @@ def _start_control_socket(
                                 provider_session_ownership=(recovery_context or {}).get(
                                     "provider_session_ownership"
                                 ),
+                                inbox=(recovery_context or {}).get("inbox"),
                             )
                         continue
                 if recovery_payload is not None:
@@ -4003,6 +4004,7 @@ def _handle_provider_turn_event_control(
     provider_session_ownership: ProviderSessionOwnership | None = None,
     claimed_path: str = VOICE_COMMAND_CLAIM_FILE,
     state_path: str = VOICE_COMMAND_STATE_FILE,
+    inbox: IntentInbox | None = None,
 ) -> bool:
     try:
         payload = json.loads(raw.strip())
@@ -4027,6 +4029,9 @@ def _handle_provider_turn_event_control(
                 _log_provider_session_transition(payload, decision=decision)
                 if decision != "accepted_exact_app_owned_replacement":
                     return False
+                if payload.get("discard_unacknowledged_claim") is True and inbox is not None:
+                    inbox.retire_replaced_claim(payload)
+                    _sync_intent_inbox_state(inbox, state_path=state_path)
             signal = "process_ready"
         elif event == "provider_progress":
             signal = "stream_progress" if "claude" in provider else "turn_progress"

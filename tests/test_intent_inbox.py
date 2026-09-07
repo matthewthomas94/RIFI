@@ -56,6 +56,19 @@ def item_metadata(
 
 
 class IntentInboxTests(unittest.TestCase):
+    def test_restart_retirement_requires_exact_claim_and_never_cancels_acknowledged_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            inbox = IntentInbox(Path(directory) / "inbox.sqlite3")
+            claim = inbox.enqueue("first", metadata(104, "old"), "continue_current")
+            self.assertFalse(inbox.retire_replaced_claim(claim), "Pending work must never be discarded")
+            inbox.observe_claim(claim, provider_turn_seen=False)
+            for field in ("intent_id", "relay_command_id", "intent_delivery_id", "intent_claim_id", "intent_ack_id"):
+                self.assertFalse(inbox.retire_replaced_claim({**claim, field: "wrong"}))
+            inbox.observe_claim(claim, provider_turn_seen=True)
+            self.assertFalse(inbox.retire_replaced_claim(claim))
+            self.assertEqual(inbox.records()[0]["state"], "acked")
+            inbox.close()
+
     def test_persisted_blocker_requires_exact_explicit_skip_and_preserves_queue(self):
         for provider in ("codex", "claude"):
             with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
@@ -129,6 +142,7 @@ class IntentInboxTests(unittest.TestCase):
                     "relay_command_seq": 94, "relay_command_id": "old", "created_at": 100,
                 }, now=100))
                 self.assertFalse(inbox.skip_recovery_blocker(blocker))
+                self.assertFalse(inbox.retire_replaced_claim(first))
                 self.assertEqual(inbox.records()[0]["state"], "review_required")
                 self.assertEqual(broker.table_records("provider_turns")[0]["state"], "active")
                 broker.close()

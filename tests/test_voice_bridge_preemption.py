@@ -4559,6 +4559,62 @@ class VoiceBridgePreemptionTests(unittest.TestCase):
                         pump.join(timeout=1)
                         restarted.close()
 
+    def test_explicit_restart_retires_only_unacknowledged_claim_and_drains_queue(self):
+        for provider in ("codex", "claude"):
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
+                inbox = voice_bridge.IntentInbox(os.path.join(directory, "inbox.sqlite3"))
+                claim = inbox.enqueue("uncertain", {
+                    "relay_command_seq": 104, "relay_command_id": "old-command",
+                    "intent_id": "old-item", "provider": provider,
+                }, "continue_current")
+                inbox.observe_claim(claim, provider_turn_seen=False)
+                inbox.enqueue("queued", {
+                    "relay_command_seq": 105, "relay_command_id": "next-command",
+                    "intent_id": "next-item", "provider": provider,
+                    "work_disposition": {"route": "continue_current", "authorization_effect": "preserve", "cancellation_scope": "none"},
+                }, "continue_current")
+                claim_path = os.path.join(directory, "claimed.json")
+                state_path = os.path.join(directory, "state.json")
+                Path(claim_path).write_text(json.dumps(claim))
+                voice_bridge.sync_deliverable_state(state_path, inbox)
+                ownership = voice_bridge.ProviderSessionOwnership(
+                    provider_session_id="old-session", provider=provider,
+                    app_session_id="app", recovery_generation="generation",
+                )
+                payload = {**claim, "event": "provider_ready", "type": "continuity_provider_ready",
+                    "previous_provider_session_id": "old-session", "provider_session_id": "new-session",
+                    "app_session_id": "app", "recovery_generation": "generation",
+                    "actor_role": "foreground_pm", "foreground_gate_handle": "new-gate",
+                    "discard_unacknowledged_claim": True}
+                with mock.patch.object(voice_bridge, "_post_continuity_event", return_value={}):
+                    self.assertFalse(voice_bridge._handle_provider_turn_event_control(
+                        json.dumps({**payload, "recovery_generation": "stale"}),
+                        provider_turn_broker=None, provider_session_ownership=ownership,
+                        claimed_path=claim_path, state_path=state_path, inbox=inbox,
+                    ))
+                    self.assertEqual(inbox.records()[0]["state"], "claimed")
+                    ordinary = voice_bridge.ProviderSessionOwnership(
+                        provider_session_id="old-session", provider=provider,
+                        app_session_id="app", recovery_generation="generation",
+                    )
+                    self.assertTrue(voice_bridge._handle_provider_turn_event_control(
+                        json.dumps({**payload, "discard_unacknowledged_claim": False}),
+                        provider_turn_broker=None, provider_session_ownership=ordinary,
+                        claimed_path=claim_path, state_path=state_path, inbox=inbox,
+                    ))
+                    self.assertEqual(inbox.records()[0]["state"], "claimed", "Ordinary replacement must not discard work")
+                    voice_bridge._handle_provider_turn_event_control(
+                        json.dumps(payload), provider_turn_broker=None,
+                        provider_session_ownership=ownership, claimed_path=claim_path,
+                        state_path=state_path, inbox=inbox,
+                    )
+                self.assertEqual([r["state"] for r in inbox.records()], ["cancelled", "pending"])
+                self.assertEqual(inbox.records()[0]["recovery_decision"], "user_restart_skipped_uncertain")
+                following = inbox.materialize_next(command_path=os.path.join(directory, "ready"),
+                    metadata_path=os.path.join(directory, "ready.meta"), transport="test")
+                self.assertEqual(following["relay_command_seq"], 105)
+                inbox.close()
+
     def test_retained_bridge_adopts_exact_app_owned_provider_replacement_and_drains_in_order(self):
         for provider in ("codex", "claude"):
             with self.subTest(provider=provider), tempfile.TemporaryDirectory() as temp_dir:

@@ -78,6 +78,22 @@ final class ContinuityRecoveryBoundaryTests: XCTestCase {
         XCTAssertEqual(payload["app_session_id"] as? String, "app-session")
         XCTAssertEqual(payload["foreground_gate_handle"] as? String, "foreground-gate-new")
         XCTAssertEqual(payload["intent_claim_id"] as? String, "claim:intent-12")
+        XCTAssertEqual(payload["discard_unacknowledged_claim"] as? Bool, false)
+
+        var explicitRestart = replacement
+        explicitRestart.discardUnacknowledgedClaim = true
+        let restarted = try XCTUnwrap(explicitRestart.authorizingReplacement(
+            providerSessionID: "provider-session-new",
+            appSessionID: "app-session",
+            foregroundGateHandle: "foreground-gate-new",
+            provider: "codex"
+        ))
+        let restartControl = try XCTUnwrap(restarted.controlMessage(
+            currentClaimIdentity: claim, currentProvider: "codex",
+            currentRecoveryGeneration: "generation-4", currentProviderSessionID: "provider-session-new"
+        ))
+        let restartPayload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(restartControl.utf8)) as? [String: Any])
+        XCTAssertEqual(restartPayload["discard_unacknowledged_claim"] as? Bool, true)
 
         var newerClaim = claim
         newerClaim["relay_command_id"] = "newer-command"

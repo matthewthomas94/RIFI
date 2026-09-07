@@ -787,6 +787,37 @@ class IntentInbox:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def retire_replaced_claim(self, expected: dict[str, Any]) -> bool:
+        """Retire only an exact uncertain claim after an authorized user restart."""
+        key = _key(expected)
+        if key is None:
+            return False
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT * FROM intents WHERE intent_id=? AND command_seq=? AND command_id=? "
+                "AND state IN ('claimed','review_required') AND route!='run_sidecar'",
+                (expected.get("intent_id"), key[0], key[1]),
+            ).fetchone()
+            if row is None or any(
+                not expected.get(field) or expected[field] != row[column]
+                for field, column in (("intent_delivery_id", "delivery_id"),
+                                      ("intent_claim_id", "claim_id"),
+                                      ("intent_ack_id", "ack_id"))
+            ):
+                return False
+            if self.provider_turn_events_enabled and self._connection.execute(
+                "SELECT 1 FROM provider_turns WHERE intent_id=? AND state='active' LIMIT 1",
+                (row["intent_id"],),
+            ).fetchone() is not None:
+                return False
+            self._connection.execute(
+                "UPDATE intents SET state='cancelled', cancelled_at=?, "
+                "recovery_decision='user_restart_skipped_uncertain' WHERE intent_id=?",
+                (time.time(), row["intent_id"]),
+            )
+        return True
+
     def recovery_blocker(self) -> dict[str, Any] | None:
         """Expose one uncertain mailbox lease, without exposing its private prompt."""
         with self._lock:

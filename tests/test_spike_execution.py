@@ -296,6 +296,36 @@ class SpikeExecutionTests(unittest.TestCase):
             }), 0)
             self.assertEqual(worker._spike_violation, "spike attempted a mutating or external command")
 
+    def test_spike_null_output_does_not_mask_real_mutations(self):
+        cases = {
+            '/bin/zsh -lc "ls -l /usr/bin/git 2>/dev/null; xcode-select -p 2>/dev/null || true"': False,
+            '/bin/zsh -lc "git show HEAD:README.md >/dev/null && echo tracked-at-head"': False,
+            'grep pattern source.py 2>/dev/null | head -20': False,
+            'git show HEAD:README.md >> /dev/null': False,
+            'git show HEAD:README.md > result.txt': True,
+            'git show HEAD:README.md > /dev/null.log': True,
+            'git show HEAD:README.md > /dev/null/file': True,
+            'git show HEAD:README.md >/dev/null; touch result.txt': True,
+            'git show HEAD:README.md >/dev/null > result.txt': True,
+            'git show HEAD:README.md >/dev/null; curl https://example.com': True,
+            'git show HEAD:README.md >/dev/null; git commit -am change': True,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RunsStore(Path(tmp) / 'runs.db')
+            run_id = store.insert(ticket_id='RR-1', repo_path='/repo',
+                                  workspace_path='/snapshot', branch='',
+                                  execution_mode='spike', state='Running')
+            for command, rejected in cases.items():
+                with self.subTest(command=command):
+                    worker = Worker(run_id=run_id, run=store.get(run_id), prompt='',
+                                    agent_bin='codex', agent_kind='codex', store=store,
+                                    log_path=Path(tmp) / 'run.log')
+                    worker._handle_event(json.dumps({
+                        'type': 'item.started',
+                        'item': {'id': '1', 'type': 'command_execution', 'command': command},
+                    }), 0)
+                    self.assertEqual(bool(worker._spike_violation), rejected)
+
     def test_schema_and_validator_share_structured_result_limits(self):
         schema = orchestrator.SPIKE_RESULT_SCHEMA["properties"]
         for field in ("conclusions", "evidence", "uncertainties", "recommended_next_steps"):

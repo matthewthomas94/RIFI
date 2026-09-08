@@ -4519,6 +4519,14 @@ class Worker:
             if isinstance(item, dict):
                 if self.run.get("execution_mode") == SPIKE_EXECUTION_MODE:
                     command = str(item.get("command") or "")
+                    # Discarding output is not a filesystem mutation. Only
+                    # exempt the literal null device, never a path prefix or
+                    # the rest of a compound command.
+                    command = re.sub(
+                        r"(?<!\S)(?:2?>>?)[ \t]*/dev/null(?=$|[\s;&|])",
+                        "",
+                        command,
+                    )
                     if item.get("type") == "command_execution" and re.search(
                         r"(?:^|[;&|]\s*)(?:rm|mv|cp|touch|mkdir|install|curl|wget|open|osascript|chmod|chown|ln|tee)\b|"
                         r"(?:^|\s)(?:>|>>|2>|2>>)\s*|"

@@ -89,15 +89,16 @@ final class SettingsWindowTests: XCTestCase {
         XCTAssertGreaterThan(secondary.redComponent, muted.redComponent)
     }
 
-    func testSettingsNavigationPresentationUsesWorkspacePrecedenceAndMotion() {
+    func testSettingsNavigationPresentationUsesTicketPrecedenceAndMotion() {
         let inactive = SettingsNavigationPresentation.resolve(
             selected: false,
             isHovered: false,
             isFocused: false,
             reduceMotion: false
         )
-        XCTAssertEqual(inactive.fillOpacity, 0)
-        XCTAssertEqual(inactive.foregroundOpacity, WorkspaceNavigationStyle.inactiveTextOpacity)
+        XCTAssertFalse(inactive.usesHoverFill)
+        XCTAssertEqual(inactive.fillOverlayOpacity, 0)
+        XCTAssertEqual(inactive.foregroundOpacity, 0.82)
         XCTAssertEqual(inactive.animationDuration, ProgramBoardInteractionPresentation.motionDuration)
 
         let hovered = SettingsNavigationPresentation.resolve(
@@ -106,8 +107,10 @@ final class SettingsWindowTests: XCTestCase {
             isFocused: false,
             reduceMotion: false
         )
-        XCTAssertEqual(hovered.fillOpacity, WorkspaceNavigationStyle.hoveredFillOpacity)
-        XCTAssertEqual(hovered.foregroundOpacity, WorkspaceNavigationStyle.activeTextOpacity)
+        XCTAssertTrue(hovered.usesHoverFill)
+        XCTAssertEqual(hovered.fillOverlayOpacity, 0)
+        XCTAssertEqual(hovered.strokeOpacity, 0.07)
+        XCTAssertEqual(hovered.foregroundOpacity, 0.95)
 
         let focused = SettingsNavigationPresentation.resolve(
             selected: false,
@@ -115,7 +118,8 @@ final class SettingsWindowTests: XCTestCase {
             isFocused: true,
             reduceMotion: false
         )
-        XCTAssertEqual(focused.fillOpacity, WorkspaceNavigationStyle.focusedFillOpacity)
+        XCTAssertTrue(focused.usesHoverFill)
+        XCTAssertEqual(focused.fillOverlayOpacity, 0)
         XCTAssertGreaterThan(focused.strokeOpacity, hovered.strokeOpacity)
 
         let selected = SettingsNavigationPresentation.resolve(
@@ -124,8 +128,10 @@ final class SettingsWindowTests: XCTestCase {
             isFocused: false,
             reduceMotion: true
         )
-        XCTAssertEqual(selected.fillOpacity, WorkspaceNavigationStyle.selectedFillOpacity)
-        XCTAssertEqual(selected.foregroundOpacity, WorkspaceNavigationStyle.activeTextOpacity)
+        XCTAssertTrue(selected.usesHoverFill)
+        XCTAssertEqual(selected.fillOverlayOpacity, 0)
+        XCTAssertEqual(selected.strokeOpacity, 0.15)
+        XCTAssertEqual(selected.foregroundOpacity, 0.98)
         XCTAssertEqual(selected.animationDuration, 0)
     }
 

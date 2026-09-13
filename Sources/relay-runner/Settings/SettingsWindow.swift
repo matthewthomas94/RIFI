@@ -425,7 +425,7 @@ private struct SettingsCategorySidebar: View {
             Spacer(minLength: 0)
         }
         .padding(.bottom, 12)
-        .background(BoardDarkSurfaceStyle.contentFill.opacity(0.48))
+        .background(BoardDarkSurfaceStyle.panelFill)
         .onMoveCommand { direction in
             switch direction {
             case .up:
@@ -474,12 +474,16 @@ private struct SettingsCategoryButton: View {
             .frame(maxWidth: .infinity, minHeight: SettingsLayout.sidebarRowHeight, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: SettingsLayout.sidebarCornerRadius, style: .continuous)
-                    .fill(Color.white.opacity(presentation.fillOpacity))
+                    .fill(presentation.usesHoverFill ? BoardDarkSurfaceStyle.hoverFill : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: SettingsLayout.sidebarCornerRadius, style: .continuous)
+                            .fill(Color.white.opacity(presentation.fillOverlayOpacity))
+                    )
             )
             .clipShape(RoundedRectangle(cornerRadius: SettingsLayout.sidebarCornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: SettingsLayout.sidebarCornerRadius, style: .continuous)
-                    .stroke(SettingsSurfaceColor.focusRing.opacity(presentation.strokeOpacity), lineWidth: 1)
+                    .strokeBorder(Color.white.opacity(presentation.strokeOpacity), lineWidth: 1)
             )
             .contentShape(RoundedRectangle(cornerRadius: SettingsLayout.sidebarCornerRadius, style: .continuous))
         }

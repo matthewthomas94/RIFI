@@ -786,25 +786,26 @@ private struct ProgramBoardInteractiveBackground: View {
     let shape: ProgramBoardControlShape
     let presentation: ProgramBoardInteractionPresentation
     let disabled: Bool
+    var usesCardStyle = false
 
     var body: some View {
         switch shape {
         case .capsule:
             Capsule()
                 .fill(backgroundColor)
-                .overlay(Capsule().fill(Color.white.opacity(presentation.fillOverlayOpacity)))
+                .overlay(Capsule().fill(Color.white.opacity(usesCardStyle ? 0 : presentation.fillOverlayOpacity)))
                 .overlay(Capsule().strokeBorder(strokeColor, lineWidth: 1))
         case .circle:
             Circle()
                 .fill(backgroundColor)
-                .overlay(Circle().fill(Color.white.opacity(presentation.fillOverlayOpacity)))
+                .overlay(Circle().fill(Color.white.opacity(usesCardStyle ? 0 : presentation.fillOverlayOpacity)))
                 .overlay(Circle().strokeBorder(strokeColor, lineWidth: 1))
         case .rounded(let radius):
             RoundedRectangle(cornerRadius: radius)
                 .fill(backgroundColor)
                 .overlay(
                     RoundedRectangle(cornerRadius: radius)
-                        .fill(Color.white.opacity(presentation.fillOverlayOpacity))
+                        .fill(Color.white.opacity(usesCardStyle ? 0 : presentation.fillOverlayOpacity))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: radius)
@@ -814,6 +815,12 @@ private struct ProgramBoardInteractiveBackground: View {
     }
 
     private var backgroundColor: Color {
+        if usesCardStyle {
+            let fill = presentation.usesHoverFill
+                ? BoardDarkSurfaceStyle.cardActiveFill
+                : BoardDarkSurfaceStyle.cardFill
+            return disabled ? fill.opacity(0.55) : fill
+        }
         if disabled {
             return BoardDarkSurfaceStyle.contentFill.opacity(0.55)
         }
@@ -826,7 +833,7 @@ private struct ProgramBoardInteractiveBackground: View {
         if disabled {
             return BoardDarkSurfaceStyle.border.opacity(0.55)
         }
-        guard presentation.strokeOpacity > 0 else {
+        guard !usesCardStyle, presentation.strokeOpacity > 0 else {
             return BoardDarkSurfaceStyle.border
         }
         return Color.white.opacity(presentation.strokeOpacity)
@@ -1340,7 +1347,8 @@ private struct ProgramProjectCard: View {
                 ProgramBoardInteractiveBackground(
                     shape: .rounded(BoardDarkSurfaceStyle.nestedCardCornerRadius),
                     presentation: presentation,
-                    disabled: !isEnabled
+                    disabled: !isEnabled,
+                    usesCardStyle: true
                 )
             )
         }
@@ -2076,7 +2084,8 @@ private struct ProgramWorkCard: View {
             ProgramBoardInteractiveBackground(
                 shape: .rounded(BoardDarkSurfaceStyle.nestedCardCornerRadius),
                 presentation: presentation,
-                disabled: false
+                disabled: false,
+                usesCardStyle: true
             )
         )
         .animation(

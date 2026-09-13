@@ -372,52 +372,19 @@ struct SettingsInlineStatus: View {
     }
 }
 
-struct SettingsNavigationPresentation: Equatable {
-    let fillOpacity: Double
-    let strokeOpacity: Double
-    let foregroundOpacity: Double
-    let animationDuration: Double
-
+enum SettingsNavigationPresentation {
     static func resolve(
         selected: Bool,
         isHovered: Bool,
         isFocused: Bool,
         reduceMotion: Bool
-    ) -> SettingsNavigationPresentation {
-        let duration = reduceMotion ? 0 : ProgramBoardInteractionPresentation.motionDuration
-
-        if selected {
-            return SettingsNavigationPresentation(
-                fillOpacity: WorkspaceNavigationStyle.selectedFillOpacity,
-                strokeOpacity: isFocused ? 0.24 : 0,
-                foregroundOpacity: WorkspaceNavigationStyle.activeTextOpacity,
-                animationDuration: duration
-            )
-        }
-
-        if isFocused {
-            return SettingsNavigationPresentation(
-                fillOpacity: WorkspaceNavigationStyle.focusedFillOpacity,
-                strokeOpacity: 0.24,
-                foregroundOpacity: WorkspaceNavigationStyle.activeTextOpacity,
-                animationDuration: duration
-            )
-        }
-
-        if isHovered {
-            return SettingsNavigationPresentation(
-                fillOpacity: WorkspaceNavigationStyle.hoveredFillOpacity,
-                strokeOpacity: 0,
-                foregroundOpacity: WorkspaceNavigationStyle.activeTextOpacity,
-                animationDuration: duration
-            )
-        }
-
-        return SettingsNavigationPresentation(
-            fillOpacity: 0,
-            strokeOpacity: 0,
-            foregroundOpacity: WorkspaceNavigationStyle.inactiveTextOpacity,
-            animationDuration: duration
+    ) -> ProgramBoardInteractionPresentation {
+        ProgramBoardInteractionPresentation.resolve(
+            surface: .ticketCard,
+            isSelected: selected,
+            isHovered: isHovered,
+            isFocused: isFocused,
+            reduceMotion: reduceMotion
         )
     }
 }
@@ -511,6 +478,6 @@ enum SettingsSurfaceColor {
     static let rowFillHovered = Color.white.opacity(0.055)
     static let rowFillSelected = Color.white.opacity(WorkspaceNavigationStyle.selectedFillOpacity)
     static let rowFillFocused = Color.white.opacity(WorkspaceNavigationStyle.focusedFillOpacity)
-    static let divider = Color.white.opacity(0.075)
+    static let divider = BoardDarkSurfaceStyle.border
     static let focusRing = neutralAccent.opacity(0.78)
 }

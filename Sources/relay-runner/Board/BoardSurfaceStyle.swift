@@ -15,11 +15,15 @@ enum BoardDarkSurfaceStyle {
     static let panelFillNSColor = NSColor(srgbRed: 9 / 255, green: 11 / 255, blue: 15 / 255, alpha: 1)
     static let contentFillNSColor = NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
     static let hoverFillNSColor = NSColor(srgbRed: 18 / 255, green: 22 / 255, blue: 30 / 255, alpha: 1)
+    static let cardFillNSColor = NSColor(srgbRed: 11 / 255, green: 14 / 255, blue: 19 / 255, alpha: 1)
+    static let cardActiveFillNSColor = NSColor(srgbRed: 17 / 255, green: 22 / 255, blue: 31 / 255, alpha: 1)
     static let borderNSColor = NSColor(srgbRed: 17 / 255, green: 22 / 255, blue: 29 / 255, alpha: 1)
 
     static let panelFill = Color(nsColor: panelFillNSColor)
     static let contentFill = Color(nsColor: contentFillNSColor)
     static let hoverFill = Color(nsColor: hoverFillNSColor)
+    static let cardFill = Color(nsColor: cardFillNSColor)
+    static let cardActiveFill = Color(nsColor: cardActiveFillNSColor)
     static let border = Color(nsColor: borderNSColor)
 
     static let workspaceCornerRadius: CGFloat = 16
@@ -115,7 +119,7 @@ struct ProgramBoardInteractionPresentation: Equatable {
             return ProgramBoardInteractionPresentation(
                 usesHoverFill: true,
                 fillOverlayOpacity: 0,
-                strokeOpacity: surface == .projectCard ? 0.48 : 0.30,
+                strokeOpacity: surface == .projectCard ? 0.24 : 0.15,
                 foregroundOpacity: 0.98,
                 animationDuration: duration,
                 accent: .selected
@@ -148,7 +152,7 @@ struct ProgramBoardInteractionPresentation: Equatable {
             return ProgramBoardInteractionPresentation(
                 usesHoverFill: true,
                 fillOverlayOpacity: 0,
-                strokeOpacity: surface == .control ? 0.16 : 0.14,
+                strokeOpacity: surface == .control ? 0.08 : 0.07,
                 foregroundOpacity: 0.95,
                 animationDuration: duration,
                 accent: .neutral

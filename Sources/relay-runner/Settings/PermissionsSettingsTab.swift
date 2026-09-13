@@ -218,7 +218,7 @@ struct PermissionsSettingsTab: View {
     private func stateIcon(_ state: RowState) -> some View {
         switch state {
         case .ok:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(SettingsSurfaceColor.success)
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(SettingsSurfaceColor.mutedText)
         case .error:
             Image(systemName: "xmark.octagon.fill").foregroundStyle(SettingsSurfaceColor.error)
         case .loading:

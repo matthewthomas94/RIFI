@@ -41,6 +41,12 @@ When no compatible system Python exists, setup downloads a checksum-verified [py
 
 Models download to user storage and are not committed to this repository. Model cards are the authoritative source for use restrictions, attribution wording, and changes made after this inventory date.
 
+## Experimental custom-voice integration
+
+Relay Runner includes its own optional adapter for a separately provisioned [KokoClone](https://github.com/Ashish-Patnaik/kokoclone)/[Kanade](https://github.com/frothywater/kanade-tokenizer) runtime. The application download does not bundle or automatically download that upstream runtime, PyTorch, Kanade/Vocos/WavLM model files, or reference recordings. These are not added to the standard voice environment above.
+
+The developer-only local installer copies an already provisioned, trusted runtime into separate Application Support storage. Its upstream components retain their own terms; Relay's MIT license does not grant rights to those components. Runtime code/model provenance and redistribution review remain separate from publication of Relay's integration code. See [Custom voices](docs/custom-voices.md) for the runtime boundary and experimental limitations.
+
 ## Fonts, icons, and provider products
 
 Relay Runner does not bundle the optional PP Mori or PP Telegraf font binaries. If those PostScript names are already installed under the user's own font license, the app can use them; otherwise it deterministically uses macOS system fonts. Apple system fonts and SF Symbols are referenced through platform APIs and are not redistributed as repository font files.

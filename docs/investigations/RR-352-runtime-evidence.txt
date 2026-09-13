@@ -1,0 +1,119 @@
+addict==2.4.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+attrs==26.1.0
+babel==2.18.0
+blis==1.3.3
+catalogue==2.0.10
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.5.0
+cloudpathlib==0.25.0
+cloudpickle==3.1.2
+confection==1.3.3
+csvw==4.1.0
+curated-tokenizers==0.0.10
+curated-transformers==0.1.1
+cymem==2.0.13
+dlinfo==2.0.0
+docopt==0.6.2
+docstring-parser==0.18.0
+einops==0.8.2
+encodec==0.1.1
+espeakng-loader==0.2.4
+filelock==3.32.5
+flatbuffers==25.12.19
+fsspec==2026.7.0
+h11==0.16.0
+hf-xet==1.6.0
+httpcore==1.0.9
+httpx==0.28.1
+huggingface-hub==1.30.0
+idna==3.19
+isodate==0.7.2
+jinja2==3.1.6
+joblib==1.6.0
+jsonargparse==4.52.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+kanade-tokenizer @ git+https://github.com/frothywater/kanade-tokenizer@961f20bf892c59f391d0b6c5f7b88e70ed919b99
+kokoro-onnx==0.5.0
+language-tags==1.3.1
+markdown-it-py==4.2.0
+markupsafe==3.0.3
+mdurl==0.1.2
+misaki==0.9.4
+mpmath==1.3.0
+murmurhash==1.0.15
+networkx==3.6.1
+num2words==0.5.14
+numpy==2.5.3
+onnxruntime==1.29.0
+packaging==26.3
+phonemizer-fork==3.3.2
+preshed==3.0.13
+protobuf==7.36.1
+psutil==7.2.2
+pycparser==3.0
+pydantic==2.13.5
+pydantic-core==2.46.5
+pygments==2.21.0
+pyparsing==3.3.2
+python-dateutil==2.9.0.post0
+pyyaml==6.0.3
+rdflib==7.6.0
+referencing==0.37.0
+regex==2026.9.3
+requests==2.34.2
+rfc3986==1.5.0
+rich==15.0.0
+rpds-py==2026.6.3
+safetensors==0.8.0
+scipy==1.18.1
+segments==2.4.0
+setuptools==84.0.0
+shellingham==1.5.4
+six==1.17.0
+smart-open==8.0.1
+soundfile==0.14.0
+spacy==3.8.16
+spacy-curated-transformers==0.3.1
+spacy-legacy==3.0.12
+spacy-loggers==1.0.5
+srsly==2.5.3
+sympy==1.14.0
+termcolor==3.3.0
+thinc==8.3.13
+torch==2.10.0
+torchaudio==2.10.0
+tqdm==4.70.0
+typer==0.27.2
+typeshed-client==2.13.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+uritemplate==4.2.0
+urllib3==2.7.0
+vocos==0.1.0
+wasabi==1.1.3
+weasel==1.0.0
+wrapt==2.4.0
+/tmp/rr352-kokoclone.7zvIOq/offline.log:RESULT {"stage": "kokoro_load", "seconds": 0.3501318749622442, "peak_rss_bytes": 614531072}
+/tmp/rr352-kokoclone.7zvIOq/offline.log:RESULT {"stage": "clone_load", "seconds": 2.1584957920131274, "device": "cpu", "peak_rss_bytes": 2362867712}
+/tmp/rr352-kokoclone.7zvIOq/offline.log:RESULT {"stage": "generation", "iteration": 0, "prompt": 0, "base_seconds": 1.3772765830508433, "conversion_seconds": 0.4575515409815125, "total_seconds": 1.8348281240323558, "audio_seconds": 2.6453333333333333, "rtf": 0.6936094218872313, "conversion_cpu_seconds": 0.7724309999999992, "peak_rss_bytes": 2491809792}
+/tmp/rr352-kokoclone.7zvIOq/offline.log:RESULT {"stage": "generation", "iteration": 0, "prompt": 1, "base_seconds": 1.7996239170315675, "conversion_seconds": 0.8693573329946958, "total_seconds": 2.6689812500262633, "audio_seconds": 8.096, "rtf": 0.3296666563767618, "conversion_cpu_seconds": 1.673731, "peak_rss_bytes": 2646867968}
+/tmp/rr352-kokoclone.7zvIOq/offline.log:RESULT {"stage": "generation", "iteration": 1, "prompt": 0, "base_seconds": 0.7008493750472553, "conversion_seconds": 0.4704175409860909, "total_seconds": 1.1712669160333462, "audio_seconds": 2.6453333333333333, "rtf": 0.4427672313634121, "conversion_cpu_seconds": 0.7406879999999987, "peak_rss_bytes": 2654797824}
+/tmp/rr352-kokoclone.7zvIOq/offline.log:RESULT {"stage": "generation", "iteration": 1, "prompt": 1, "base_seconds": 1.8351328749558888, "conversion_seconds": 0.8676612499984913, "total_seconds": 2.70279412495438, "audio_seconds": 8.096, "rtf": 0.3338431478451556, "conversion_cpu_seconds": 1.6728260000000041, "peak_rss_bytes": 2654797824}
+/tmp/rr352-kokoclone.7zvIOq/offline.log:RESULT {"stage": "generation", "iteration": 2, "prompt": 0, "base_seconds": 0.6988200829946436, "conversion_seconds": 0.3560123330098577, "total_seconds": 1.0548324160045013, "audio_seconds": 2.6453333333333333, "rtf": 0.39875217338879837, "conversion_cpu_seconds": 0.6455020000000005, "peak_rss_bytes": 2654797824}
+/tmp/rr352-kokoclone.7zvIOq/offline.log:RESULT {"stage": "generation", "iteration": 2, "prompt": 1, "base_seconds": 1.7677392920013517, "conversion_seconds": 0.8678725410136394, "total_seconds": 2.635611833014991, "audio_seconds": 8.096, "rtf": 0.3255449398486896, "conversion_cpu_seconds": 1.6705129999999997, "peak_rss_bytes": 2654797824}
+/tmp/rr352-kokoclone.7zvIOq/online-2.log:RESULT {"stage": "kokoro_load", "seconds": 0.34104995895177126, "peak_rss_bytes": 614563840}
+/tmp/rr352-kokoclone.7zvIOq/online-2.log:RESULT {"stage": "clone_load", "seconds": 17.449800457980018, "device": "cpu", "peak_rss_bytes": 2107277312}
+/tmp/rr352-kokoclone.7zvIOq/online-2.log:RESULT {"stage": "generation", "iteration": 0, "prompt": 0, "base_seconds": 1.3431556670111604, "conversion_seconds": 0.3867675419896841, "total_seconds": 1.7299232090008445, "audio_seconds": 2.6453333333333333, "rtf": 0.6539528259831822, "conversion_cpu_seconds": 0.698576000000001, "peak_rss_bytes": 2434924544}
+/tmp/rr352-kokoclone.7zvIOq/online-2.log:RESULT {"stage": "generation", "iteration": 0, "prompt": 1, "base_seconds": 1.769840250024572, "conversion_seconds": 0.8670585420331918, "total_seconds": 2.636898792057764, "audio_seconds": 8.096, "rtf": 0.3257039021810479, "conversion_cpu_seconds": 1.6730869999999989, "peak_rss_bytes": 2586034176}
+/tmp/rr352-kokoclone.7zvIOq/online-2.log:RESULT {"stage": "generation", "iteration": 1, "prompt": 0, "base_seconds": 0.6939102079486474, "conversion_seconds": 0.35256324999500066, "total_seconds": 1.046473457943648, "audio_seconds": 2.6453333333333333, "rtf": 0.39559228500893956, "conversion_cpu_seconds": 0.6422760000000025, "peak_rss_bytes": 2597453824}
+/tmp/rr352-kokoclone.7zvIOq/online-2.log:RESULT {"stage": "generation", "iteration": 1, "prompt": 1, "base_seconds": 1.794050833035726, "conversion_seconds": 0.8705500410287641, "total_seconds": 2.66460087406449, "audio_seconds": 8.096, "rtf": 0.32912560203365737, "conversion_cpu_seconds": 1.6838169999999977, "peak_rss_bytes": 2776432640}
+/tmp/rr352-kokoclone.7zvIOq/online-2.log:RESULT {"stage": "generation", "iteration": 2, "prompt": 0, "base_seconds": 0.6970372079522349, "conversion_seconds": 0.344614791974891, "total_seconds": 1.0416519999271259, "audio_seconds": 2.6453333333333333, "rtf": 0.3937696572305163, "conversion_cpu_seconds": 0.6271100000000018, "peak_rss_bytes": 2785394688}
+/tmp/rr352-kokoclone.7zvIOq/online-2.log:RESULT {"stage": "generation", "iteration": 2, "prompt": 1, "base_seconds": 1.7382337920134887, "conversion_seconds": 0.8786508750054054, "total_seconds": 2.616884667018894, "audio_seconds": 8.096, "rtf": 0.3232318017562863, "conversion_cpu_seconds": 1.6938870000000037, "peak_rss_bytes": 2785787904}
+0feb3fdd929bcd6649e0e7c5a688cf7dd012ef21
+136a3e720c04f2c77bf7a4dc6a3868b14d5a2c145a988114b733cb1a8428be98  /tmp/rr352-kokoclone.7zvIOq/torch/hub/checkpoints/wavlm_base_plus.pth

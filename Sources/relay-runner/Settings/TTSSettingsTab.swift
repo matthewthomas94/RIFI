@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TTSSettingsTab: View {
     @Binding var config: TtsConfig
+    @Bindable var appState: AppState
 
     private let voices = [
         "af_bella", "af_sarah", "af_nicole", "af_sky", "af_heart",
@@ -10,18 +11,23 @@ struct TTSSettingsTab: View {
         "bm_george", "bm_lewis",
     ]
 
-    /// Sample sentence for the preview button. A pangram covers most phonemes
-    /// so the user gets a realistic sense of each voice's character.
-    private let previewText = "The quick brown fox jumps over the lazy dog."
-
     @State private var chimes: [String] = []
-    @State private var isPreviewing = false
-    @State private var previewError: String?
+    @State private var preview = VoicePreviewController()
 
     var body: some View {
         SettingsStack {
-            SettingsSection("Voice") {
-                SettingsControlRow("Voice") {
+            SettingsSection("Standard Voices") {
+                SettingsControlRow("Mode") {
+                    Text(config.custom_voice_id == nil ? "Standard" : "Custom")
+                    if config.custom_voice_id != nil {
+                        SettingsActionButton(title: "Use Standard", systemImage: nil) {
+                            preview.invalidate()
+                            config.custom_voice_id = nil
+                        }
+                    }
+                }
+                SettingsDivider()
+                SettingsControlRow(config.custom_voice_id == nil ? "Voice" : "Base Voice") {
                     HStack(spacing: 8) {
                         Picker("Voice", selection: $config.voice) {
                             ForEach(voices, id: \.self) { voice in
@@ -30,31 +36,33 @@ struct TTSSettingsTab: View {
                         }
                         SettingsActionButton(
                             title: "Preview",
-                            systemImage: isPreviewing ? "hourglass" : "play.fill",
+                            systemImage: preview.isBusy ? "stop.fill" : "play.fill",
                             prominence: .icon,
-                            isEnabled: !isPreviewing,
-                            accessibilityLabel: isPreviewing ? "Previewing voice" : "Preview voice",
+                            isEnabled: preview.isBusy || !appState.settingsAudioBusy,
+                            accessibilityLabel: preview.isBusy ? "Stop preview" : "Preview standard voice",
                             helpText: "Preview this voice",
                             action: previewSelectedVoice
                         )
                     }
                 }
 
-                if isPreviewing || previewError != nil {
+                if preview.isBusy || preview.error != nil {
                     SettingsDivider()
                     SettingsRow {
                         SettingsInlineStatus(
                             text: previewStatusText,
-                            semanticColor: previewError == nil ? .neutralAccent : .error,
+                            semanticColor: preview.error == nil ? .neutralAccent : .error,
                             reservedWidth: 170
                         )
-                        Text(previewError ?? "Generating preview audio\u{2026}")
+                        Text(preview.error ?? preview.status)
                             .font(AppTypography.font(.settingsDescription))
-                            .foregroundStyle(previewError == nil ? SettingsSurfaceColor.secondaryText : SettingsSurfaceColor.error)
+                            .foregroundStyle(preview.error == nil ? SettingsSurfaceColor.secondaryText : SettingsSurfaceColor.error)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
+
+            CustomVoiceSettingsSection(config: $config, appState: appState, preview: preview)
 
             SettingsSection("Playback") {
                 SettingsControlRow("Playback Mode") {
@@ -97,6 +105,11 @@ struct TTSSettingsTab: View {
             }
         }
         .onAppear { loadChimes() }
+        .onDisappear { preview.stop() }
+        .onChange(of: config.voice) { _, _ in preview.invalidate() }
+        .onChange(of: config.rate) { _, _ in preview.invalidate() }
+        .onChange(of: appState.settingsAudioBusy) { _, busy in if busy { preview.stop() } }
+        .onChange(of: appState.sttEngine.map(ObjectIdentifier.init)) { _, _ in preview.stop() }
     }
 
     private func loadChimes() {
@@ -122,7 +135,7 @@ struct TTSSettingsTab: View {
     }
 
     private var previewStatusText: String {
-        if previewError != nil {
+        if preview.error != nil {
             return "Preview failed"
         }
         return "Previewing"
@@ -133,24 +146,7 @@ struct TTSSettingsTab: View {
     }
 
     private func previewSelectedVoice() {
-        let voice = config.voice
-        let text = previewText
-        isPreviewing = true
-        previewError = nil
-        Task.detached(priority: .userInitiated) {
-            let result: Result<Void, Error>
-            do {
-                try ProcessManager().previewVoice(name: voice, text: text)
-                result = .success(())
-            } catch {
-                result = .failure(error)
-            }
-            await MainActor.run {
-                isPreviewing = false
-                if case .failure(let err) = result {
-                    previewError = err.localizedDescription
-                }
-            }
-        }
+        if preview.isBusy { preview.stop(); return }
+        preview.preview(voice: config.voice, rate: config.rate, key: "standard", appState: appState)
     }
 }

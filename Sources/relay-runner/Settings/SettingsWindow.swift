@@ -230,8 +230,8 @@ private struct SettingsContent: View {
                     .stroke(BoardDarkSurfaceStyle.border, lineWidth: 1)
             }
         }
-        .onChange(of: appState.config) { _, newValue in
-            draft = newValue
+        .onChange(of: appState.config) { oldValue, newValue in
+            draft = draft.mergingCustomVoiceRemoval(from: oldValue, to: newValue)
         }
         .onChange(of: selectedCategory) { _, newValue in
             scrollTarget = newValue
@@ -246,7 +246,7 @@ private struct SettingsContent: View {
         case .speechToText:
             STTSettingsTab(config: $draft.stt)
         case .textToSpeech:
-            TTSSettingsTab(config: $draft.tts)
+            TTSSettingsTab(config: $draft.tts, appState: appState)
         case .general:
             GeneralSettingsTab(
                 config: $draft.general,

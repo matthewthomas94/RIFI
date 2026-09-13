@@ -104,6 +104,22 @@ final class STTRecordingAccumulationTests: XCTestCase {
         XCTAssertEqual(published, ["ordinary command"])
     }
 
+    func testReferenceAudioCannotPublishCommandsOrControlsAndNormalDeliveryResumes() {
+        var published: [String] = []
+        for text in ["private voice sample", "__PLAY__:1.0", "__RECORDING__:true"] {
+            XCTAssertFalse(STTEngine.writeVoiceOutput(
+                text, tutorialActive: false, referenceAudioSuspended: true,
+                writer: { published.append($0); return true }
+            ))
+        }
+        XCTAssertTrue(STTEngine.writeVoiceOutput(
+            "ordinary command after recording", tutorialActive: false,
+            referenceAudioSuspended: false,
+            writer: { published.append($0); return true }
+        ))
+        XCTAssertEqual(published, ["ordinary command after recording"])
+    }
+
     func testPlaybackControlsCarryDetectionAndVisualAcknowledgementTiming() {
         let detected = Date(timeIntervalSince1970: 1_000.125)
         let acknowledged = Date(timeIntervalSince1970: 1_000.175)

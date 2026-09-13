@@ -1,5 +1,7 @@
 # RR-268 — Custom cloned TTS voice spike
 
+Research update: the [2026-09-08 inline KokoClone rerun](RR-268-kokoclone-addendum.md) supersedes this report's candidate shortlist. Measurements below remain historical and were not rerun.
+
 Date: 2026-09-07
 
 Source baseline: `3788552` (`v0.4.51`)
@@ -326,4 +328,3 @@ separate cold-start implementation tickets.
 | Recommended architecture and provider parity | Complete as a conditional design | Adapter boundary, fallback, lifecycle, errors, packaging, and equal Codex/Claude behavior are specified. |
 | No production integration | Complete | Only this investigation document was added. |
 | Final decision | Complete | Further evidence; no implementation tickets created. |
-

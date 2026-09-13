@@ -110,6 +110,7 @@ def load_config(config_path: str | None = None) -> dict:
         "tts": {
             "engine": "kokoro",
             "voice": "bm_george",
+            "custom_voice_id": "",
             "rate": 1.3,
             "auto_play": False,
             "chime": "Tink",

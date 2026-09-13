@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import QuartzCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 @Observable
 final class AppState {
@@ -210,6 +211,15 @@ final class AppState {
     let processManager = ProcessManager()
     let embeddedTerminal = EmbeddedTerminalSession()
     let permissions = PermissionsManager()
+    var customVoiceNotice: String?
+
+    var settingsAudioBusy: Bool {
+        if sttEngine?.isRecording == true { return true }
+        switch stateMachine.state {
+        case .preparing, .speaking, .recording: return true
+        default: return false
+        }
+    }
     // @ObservationIgnored: @Observable's macro expansion doesn't compose with
     // `lazy`. The controller is stateless from the UI's perspective — views
     // observe PermissionsManager directly — so hiding it from observation
@@ -1521,6 +1531,27 @@ final class AppState {
         refreshWorkspaceActivity(invalidateRoute: true)
     }
 
+    func chooseCustomVoiceAudio(completion: @escaping (URL?) -> Void) {
+        let resumeWorkspace = programBoardOverlay.isVisible
+        suspendWorkspaceForProjectPicker { [weak self] in
+            guard let self else {
+                completion(nil)
+                return
+            }
+            defer {
+                if resumeWorkspace { self.programBoardOverlay.showSettings() }
+            }
+            let panel = NSOpenPanel()
+            panel.title = "Import Custom Voice"
+            panel.message = "Choose a voice reference recording."
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.allowedContentTypes = [.wav, .aiff, .mp3, .mpeg4Audio]
+            completion(WorkspaceDirectoryPicker.runAppKitPanel(panel))
+        }
+    }
+
     func addExistingProject(
         resumeInSettings: Bool = false,
         completion: ((Result<RegisteredProjectV2, Error>) -> Void)? = nil
@@ -2215,6 +2246,9 @@ final class AppState {
                 )
             },
             onServiceEvent: { [weak self] source, state, text, tutorial in
+                if source == "tts", state == "custom_voice_fallback" {
+                    self?.customVoiceNotice = "Custom voice unavailable. The remaining response used George. Preview the voice again to check its local runtime."
+                }
                 self?.handleOnboardingTutorialServiceEvent(
                     source: source,
                     state: state,

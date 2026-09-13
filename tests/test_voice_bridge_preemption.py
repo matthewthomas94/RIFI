@@ -6273,6 +6273,7 @@ class VoiceBridgePreemptionTests(unittest.TestCase):
         self.assertIn("intent_inbox.py", script)
         self.assertIn("sidecar_lane.py", script)
         self.assertIn("speech_coordinator.py", script)
+        self.assertIn("custom_voice_worker.py", script)
         self.assertIn("codex_model_catalog.py", script)
         self.assertIn("artifact_lifecycle.py", script)
         self.assertIn("artifact_migration.py", script)

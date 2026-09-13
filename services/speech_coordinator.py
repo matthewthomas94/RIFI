@@ -268,6 +268,8 @@ class SpeechCoordinator:
         self._lock = threading.RLock()
         self._accepted_keys: set[str] = set()
         self._intents: dict[str, SpeechIntent] = {}
+        self._voice_profiles: dict[str, str] = {}
+        self._known_voice_profiles: set[str] = set()
         self._committed_id: str | None = None
         self._playing_id: str | None = None
         self._backlog: list[SpeechIntent] = []
@@ -744,7 +746,45 @@ class SpeechCoordinator:
         return accepted
 
     def reload_config(self) -> None:
+        # Deletion is narrower than a voice change: retire only speech/replay
+        # associated with the deleted profile; unrelated lifecycle work survives.
+        exists = getattr(self.worker, "custom_profile_exists", None)
+        if exists:
+            with self._lock:
+                profiles = set(self._known_voice_profiles)
+            deleted = {profile for profile in profiles if not exists(profile)}
+            if deleted:
+                with self._lock:
+                    stale_ids = {key for key, profile in self._voice_profiles.items() if profile in deleted}
+                    retired = [intent for intent in self._replayable_history if intent.utterance_id in stale_ids]
+                    self._replayable_history = [intent for intent in self._replayable_history if intent.utterance_id not in stale_ids]
+                    self._backlog = [intent for intent in self._backlog if intent.utterance_id not in stale_ids]
+                    stop_active = self._playing_id in stale_ids or self._committed_id in stale_ids
+                    if self._committed_id in stale_ids:
+                        self._committed_id = None
+                        self._clear_play_request_locked()
+                    for key in stale_ids:
+                        self._intents.pop(key, None)
+                        self._voice_profiles.pop(key, None)
+                if stop_active:
+                    self.worker.stop_playback(reason="voice_deleted")
+                    with self._lock:
+                        if self._playing_id in stale_ids:
+                            self._playing_id = None
+                self.worker.invalidate_custom_profiles(deleted)
+                if retired:
+                    self._publish_replay_invalidated(retired[-1], reason="voice_deleted")
+                with self._lock:
+                    self._known_voice_profiles -= deleted
         self.worker.reload_config()
+        next_intent = None
+        with self._lock:
+            if not self._committed_id and not self._playing_id and not self._speech_stopped:
+                next_intent = self._next_eligible_locked()
+                if next_intent:
+                    self._committed_id = next_intent.utterance_id
+        if next_intent:
+            self._enqueue_worker(next_intent)
 
     def shutdown(self) -> None:
         self._shutdown.set()
@@ -757,6 +797,11 @@ class SpeechCoordinator:
     def _accept_locked(self, intent: SpeechIntent) -> None:
         self._accepted_keys.add(intent.dedup_key)
         self._intents[intent.utterance_id] = intent
+        self._voice_profiles[intent.utterance_id] = getattr(self.worker, "custom_voice_id", "")
+        profile = self._voice_profiles[intent.utterance_id]
+        exists = getattr(self.worker, "custom_profile_exists", None)
+        if profile and exists and exists(profile):
+            self._known_voice_profiles.add(profile)
         if len(self._accepted_keys) > 512:
             self._accepted_keys = set(list(self._accepted_keys)[-256:])
 
@@ -882,6 +927,12 @@ class SpeechCoordinator:
             intent = self._intent_for(intent_id)
             if intent is None:
                 return
+            if state == "preparing":
+                self._voice_profiles[intent_id] = str(payload.get("custom_voice_id") or "")
+                profile = self._voice_profiles[intent_id]
+                exists = getattr(self.worker, "custom_profile_exists", None)
+                if profile and exists and exists(profile):
+                    self._known_voice_profiles.add(profile)
             if state == "started":
                 self._playing_id = intent_id
                 if self._committed_id == intent_id:

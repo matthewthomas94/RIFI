@@ -1767,10 +1767,10 @@ final class ProcessManager {
 
     // MARK: - Voice preview
 
-    /// Run a one-shot voice preview using the bundled preview_voice.py.
-    /// Blocks until afplay returns or the script exits with an error. Throws
-    /// if the venv or model isn't ready (caller surfaces that to the user).
-    func previewVoice(name: String, text: String) throws {
+    /// Build an owned preview process. The caller drains stderr, bounds its
+    /// lifetime and plays the output locally; it never enters the response queue.
+    func voicePreviewProcess(name: String, text: String, output: URL,
+                             customVoiceID: String? = nil, draft: Bool = false) throws -> Process {
         let python = Self.userVenvPython
         let script = bundledServicesDir.appendingPathComponent("preview_voice.py").path
 
@@ -1787,23 +1787,17 @@ final class ProcessManager {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: python)
-        proc.arguments = [script, "--voice", name, "--text", text]
+        proc.arguments = [script, "--voice", name, "--text", text, "--output", output.path]
+        if let id = customVoiceID, !id.isEmpty {
+            guard CustomVoiceStore.validID(id) else { throw CustomVoiceFailure.invalidProfile }
+            proc.arguments! += ["--custom-voice-id", id]
+            if draft { proc.arguments!.append("--draft") }
+        }
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         proc.environment = environment
         proc.standardOutput = FileHandle.nullDevice
-        let errPipe = Pipe()
-        proc.standardError = errPipe
-        try proc.run()
-        proc.waitUntilExit()
-
-        if proc.terminationStatus != 0 {
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            let errStr = String(data: errData, encoding: .utf8) ?? "(no stderr)"
-            throw NSError(domain: "ProcessManager.previewVoice", code: 3, userInfo: [
-                NSLocalizedDescriptionKey: "Voice preview failed: \(errStr.trimmingCharacters(in: .whitespacesAndNewlines))"
-            ])
-        }
+        return proc
     }
 
     /// Returns the `cd` line for the launcher script using the configured

@@ -50,6 +50,12 @@ class TTSWorkerReplayTests(unittest.TestCase):
         socket_patch = patch.object(tts_worker.socket, "socket")
         self.socket_factory = socket_patch.start()
         self.addCleanup(socket_patch.stop)
+        audio_root = tempfile.TemporaryDirectory()
+        self.addCleanup(audio_root.cleanup)
+        from pathlib import Path
+        lease_patch = patch("voice_audio_lease.support_root", return_value=Path(audio_root.name))
+        lease_patch.start()
+        self.addCleanup(lease_patch.stop)
 
     def test_waiting_preview_uses_isolated_socket(self):
         tts_worker.publish_waiting_preview(
@@ -739,7 +745,7 @@ class TTSWorkerReplayTests(unittest.TestCase):
             wav_text[wav] = text
             return wav
 
-        def play(wav):
+        def play(wav, **_kwargs):
             text = wav_text[wav]
             played.append(text)
             if text == "First sentence.":
@@ -758,6 +764,42 @@ class TTSWorkerReplayTests(unittest.TestCase):
         self.assertEqual(worker._last_wav, combined_wav)
         self.assertFalse(worker._playing)
 
+    def test_same_text_and_voice_after_switch_cannot_reuse_first_speculative_attempt(self):
+        worker = self.make_chunk_worker()
+        del worker._cancel_speculation
+        arrived = threading.Event()
+        release = threading.Event()
+        first = self.temp_wav()
+        second = self.temp_wav()
+        paths = iter((first, second))
+        threads = []
+        real_thread = threading.Thread
+
+        def make_thread(*args, **kwargs):
+            thread = real_thread(*args, **kwargs)
+            threads.append(thread)
+            return thread
+
+        def synthesize(_text):
+            path = next(paths)
+            if path == first:
+                arrived.set()
+                release.wait(1)
+            return path
+
+        worker._synthesize_to_wav = synthesize
+        with patch.object(tts_worker.threading, "Thread", side_effect=make_thread):
+            worker._start_speculation("Same text.")
+            self.assertTrue(arrived.wait(1))
+            worker._cancel_speculation()
+            worker._start_speculation("Same text.")
+            threads[1].join(1)
+            release.set()
+            threads[0].join(1)
+        self.assertEqual(worker._spec_wav, second)
+        self.assertFalse(os.path.exists(first))
+        self.assertTrue(os.path.exists(second))
+
     def test_stop_during_chunk_prevents_later_chunks_from_playing(self):
         worker = self.make_chunk_worker()
         played = []
@@ -768,7 +810,7 @@ class TTSWorkerReplayTests(unittest.TestCase):
             wav_text[wav] = text
             return wav
 
-        def play(wav):
+        def play(wav, **_kwargs):
             text = wav_text[wav]
             played.append(text)
             if text == "First sentence.":
@@ -786,6 +828,7 @@ class TTSWorkerReplayTests(unittest.TestCase):
     def test_play_wav_blocking_uses_default_rate_multiplier_for_afplay(self):
         worker = self.make_worker()
         worker._rate = 1.3
+        worker._playing = True
 
         class FakeProc:
             def wait(self):
@@ -829,6 +872,36 @@ class TTSWorkerReplayTests(unittest.TestCase):
             worker._play_wav_blocking("/tmp/test.wav")
 
         self.assertEqual(events, [("preparing", "speech-1"), ("afplay_started", "speech-1")])
+
+    def test_late_old_generation_never_starts_audio_or_overwrites_new_cache(self):
+        worker = self.make_chunk_worker()
+        worker._playback_generation = 2
+        worker._last_wav = self.temp_wav()
+        retained = worker._last_wav
+        with patch.object(tts_worker.subprocess, "Popen") as popen, patch.object(tts_worker, "_notify_state") as notify:
+            worker._set_last_wav("/tmp/old.wav", generation=1)
+            worker._play_wav_blocking("/tmp/old.wav", generation=1, rate=1.3)
+        self.assertEqual(worker._last_wav, retained)
+        popen.assert_not_called()
+        notify.assert_not_called()
+
+    def test_cached_voice_snapshot_does_not_follow_new_config(self):
+        worker = self.make_chunk_worker()
+        old = tts_worker.VoiceSelection("bf_emma", 1.1, "a" * 32, 0)
+        worker._custom_voice_id = "b" * 32
+        worker._rate = 1.8
+        worker._set_last_wav(self.temp_wav(), selection=old, generation=1)
+        self.assertEqual(worker._last_wav_profile_id, "a" * 32)
+        self.assertEqual(worker._last_wav_rate, 1.1)
+
+    def test_audio_process_failure_is_not_reported_as_success(self):
+        worker = self.make_chunk_worker()
+        from unittest.mock import MagicMock
+        process = MagicMock()
+        process.wait.return_value = 1
+        with patch.object(tts_worker.subprocess, "Popen", return_value=process):
+            with self.assertRaisesRegex(tts_worker.CustomVoiceError, "playback_failed"):
+                worker._play_wav_blocking("/tmp/test.wav", generation=1)
 
     def test_missing_voice_model_surfaces_explicit_failure_state(self):
         worker = self.make_chunk_worker()

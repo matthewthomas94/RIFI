@@ -59,6 +59,7 @@ final class STTEngine: @unchecked Sendable {
     @ObservationIgnored private var captureInterruptionEpoch: UInt64 = 0
     @ObservationIgnored private var routeCancellationNoticePending = false
     @ObservationIgnored private var captureReady = false
+    @ObservationIgnored private var referenceAudioToken: UUID?
     @ObservationIgnored private lazy var audioCapture: AudioCaptureLifecycle = AudioCaptureLifecycle(
         sampleHandler: { [weak self] samples in
             self?.audioBuffer.append(samples)
@@ -135,7 +136,7 @@ final class STTEngine: @unchecked Sendable {
             self?.captureDidRecover(recovery)
         }
         do {
-            if let route = try audioCapture.start() {
+            if !referenceAudioSuspended, let route = try audioCapture.start() {
                 setCaptureReady(true)
                 NSLog(
                     "[STTEngine] Audio capture started. device=\(route.deviceID) " +
@@ -159,7 +160,53 @@ final class STTEngine: @unchecked Sendable {
     }
 
     func toggleRecording() {
+        guard !referenceAudioSuspended else { return }
         gesture.toggleActivation()
+    }
+
+    private var referenceAudioSuspended: Bool {
+        captureInterruptionLock.lock()
+        defer { captureInterruptionLock.unlock() }
+        return referenceAudioToken != nil
+    }
+
+    /// Keeps the ASR model loaded but disconnects command capture. Neither
+    /// imported playback nor microphone references may become provider input.
+    func suspendForReferenceAudio() throws -> UUID {
+        captureInterruptionLock.lock()
+        guard referenceAudioToken == nil, !isRecording, !gesture.isRecording else {
+            captureInterruptionLock.unlock()
+            throw CustomVoiceFailure.busy
+        }
+        let token = UUID()
+        referenceAudioToken = token
+        captureInterruptionEpoch &+= 1
+        captureReady = false
+        captureInterruptionLock.unlock()
+        resetRecordingBuffer()
+        gesture.reset()
+        audioCapture.stop()
+        return token
+    }
+
+    func resumeAfterReferenceAudio(_ token: UUID) {
+        captureInterruptionLock.lock()
+        guard referenceAudioToken == token else { captureInterruptionLock.unlock(); return }
+        referenceAudioToken = nil
+        captureInterruptionEpoch &+= 1
+        captureInterruptionLock.unlock()
+        resetRecordingBuffer()
+        gesture.reset()
+        guard processingTask != nil else { return } // A stopped/replaced engine stays stopped.
+        do {
+            if try audioCapture.start() != nil {
+                setCaptureReady(true)
+                audioBuffer.accepting = inputMode != "caps_lock_toggle"
+            }
+        } catch {
+            setCaptureReady(false)
+            statusMessage = "Microphone capture could not resume. Check the input device."
+        }
     }
 
     /// Cancel an in-progress recording externally (e.g. no session to send to).
@@ -176,6 +223,7 @@ final class STTEngine: @unchecked Sendable {
         captureInterruptionLock.lock()
         captureInterruptionEpoch &+= 1
         captureReady = false
+        referenceAudioToken = nil
         pendingCaptureInterruption = nil
         routeCancellationNoticePending = false
         captureInterruptionLock.unlock()
@@ -296,6 +344,7 @@ final class STTEngine: @unchecked Sendable {
 
         while !Task.isCancelled {
             try await Task.sleep(for: .milliseconds(pollMs))
+            if referenceAudioSuspended { continue }
             _ = takeCaptureInterruption()
             transcribeCounter += 1
             if transcribeCounter < stepMs / pollMs { continue }
@@ -325,7 +374,7 @@ final class STTEngine: @unchecked Sendable {
             let lower = text.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " ."))
             guard !hallucinations.contains(lower) else { continue }
 
-            if FIFOWriter.write(text) { NSLog("[STTEngine] >> \(text)") }
+            if writeVoiceOutput(text) { NSLog("[STTEngine] >> \(text)") }
             audioBuffer.clearExceptKeep(keepSamples)
         }
     }
@@ -346,6 +395,12 @@ final class STTEngine: @unchecked Sendable {
 
         while !Task.isCancelled {
             try await Task.sleep(for: .milliseconds(pollMs))
+
+            if referenceAudioSuspended {
+                transcript.reset()
+                mediaSettleDeadline = nil
+                continue
+            }
 
             if let interruption = takeCaptureInterruption() {
                 let cancelledRecording = interruption.recordingOutcome == .cancelRecording
@@ -558,16 +613,20 @@ final class STTEngine: @unchecked Sendable {
 
     @discardableResult
     private func writeVoiceOutput(_ text: String) -> Bool {
-        Self.writeVoiceOutput(text, tutorialActive: tutorialActive)
+        Self.writeVoiceOutput(
+            text, tutorialActive: tutorialActive,
+            referenceAudioSuspended: referenceAudioSuspended
+        )
     }
 
     @discardableResult
     static func writeVoiceOutput(
         _ text: String,
         tutorialActive: Bool,
+        referenceAudioSuspended: Bool = false,
         writer: (String) -> Bool = { FIFOWriter.write($0) }
     ) -> Bool {
-        guard !tutorialActive else { return false }
+        guard !tutorialActive, !referenceAudioSuspended else { return false }
         return writer(text)
     }
 
